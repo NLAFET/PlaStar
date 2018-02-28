@@ -18,6 +18,8 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
+#include <mpi.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,6 +35,10 @@ typedef struct {
     int max_panel_threads;          ///< max threads for panel factorization
     plasma_barrier_t barrier;       ///< thread barrier for multithreaded tasks
     plasma_enum_t householder_mode; ///< PlasmaHouseholderMode
+    int mpi_outer_init;             ///< In distributed mode, was MPI
+                                    ///  initialized before call to plasma_init?
+    MPI_Comm comm;                  ///< MPI communicator to use
+    double time;                   ///< Computation time
 } plasma_context_t;
 
 typedef struct {

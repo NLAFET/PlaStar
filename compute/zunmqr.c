@@ -19,6 +19,9 @@
 #include "plasma_types.h"
 #include "plasma_workspace.h"
 
+#include <starpu.h>
+#include <starpu_mpi.h>
+
 /***************************************************************************//**
  *
  * @ingroup plasma_unmqr
@@ -205,14 +208,18 @@ int plasma_zunmqr(plasma_enum_t side, plasma_enum_t trans,
     // Translate back to LAPACK layout.
     plasma_starpu_zdesc2ge(C, pC, ldc, &sequence, &request);
     
-    // Synchronize.
-    starpu_task_wait_for_all();
-
     // Free matrices in tile layout.
     plasma_desc_destroy(&A);
     plasma_desc_destroy(&C);
 
+    // Wait for all tasks and communictions.
+    starpu_task_wait_for_all();
+    //starpu_mpi_wait_for_all(plasma->comm);
+
     plasma_workspace_destroy(&work);
+
+    // Synchronize across nodes.
+    starpu_mpi_barrier(plasma->comm);
 
     // Return status.
     int status = sequence.status;

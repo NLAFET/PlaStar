@@ -41,20 +41,20 @@ struct routines_t routines[] =
     { "cgeqrf", test_cgeqrf },
     { "sgeqrf", test_sgeqrf },
 
-    { "zgetrf", test_zgetrf },
-    { "dgetrf", test_dgetrf },
-    { "cgetrf", test_cgetrf },
-    { "sgetrf", test_sgetrf },
+    //{ "zgetrf", test_zgetrf },
+    //{ "dgetrf", test_dgetrf },
+    //{ "cgetrf", test_cgetrf },
+    //{ "sgetrf", test_sgetrf },
 
     { "zpotrf", test_zpotrf },
     { "dpotrf", test_dpotrf },
     { "cpotrf", test_cpotrf },
     { "spotrf", test_spotrf },
 
-    { "ztrsm", test_ztrsm },
-    { "dtrsm", test_dtrsm },
-    { "ctrsm", test_ctrsm },
-    { "strsm", test_strsm },
+    //{ "ztrsm", test_ztrsm },
+    //{ "dtrsm", test_dtrsm },
+    //{ "ctrsm", test_ctrsm },
+    //{ "strsm", test_strsm },
 
     { NULL, NULL }  // last entry
 };
@@ -210,11 +210,20 @@ static param_desc_t ParamDesc[] = {
  ******************************************************************************/
 int main(int argc, char **argv)
 {
+    // Initialize MPI with support for threads.
+    int provided;
+    MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided);
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     if (argc == 1 ||
         strcmp(argv[1], "-h") == 0 ||
         strcmp(argv[1], "--help") == 0) {
 
-        print_main_usage();
+        if (rank == 0) {
+            print_main_usage();
+        }
         return EXIT_SUCCESS;
     }
 
@@ -235,7 +244,9 @@ int main(int argc, char **argv)
 
     // Print labels.
     param_snap(param, pval);
-    print_header(routine, pval);
+    if (rank == 0) {
+        print_header(routine, pval);
+    }
 
     // Iterate over parameters and run tests
     plasma_init();
@@ -245,12 +256,19 @@ int main(int argc, char **argv)
             err += test_routine(routine, pval, test);
             }
             if (iter > 1) {
-                printf("\n");
+                if (rank == 0) {
+                    printf("\n");
+                }
             }
         }
     while (outer ? param_step_outer(param, 0) : param_step_inner(param));
     plasma_finalize();
-    printf("\n");
+    if (rank == 0) {
+        printf("\n");
+    }
+
+    MPI_Finalize();
+
     return err;
 }
 
@@ -391,86 +409,91 @@ int test_routine(const char *name, param_value_t pval[], bool test)
 {
     run_routine(name, pval, true);
 
-    for (int i = 0; i < PARAM_SIZEOF; ++i) {
-        if (pval[i].used) {
-            switch (i) {
-            case PARAM_SUCCESS:
-                if (test)
-                    printf("  %*s", ParamDesc[i].width, pval[i].i ? "pass" : "FAILED");
-                else
-                    printf("  %*s", ParamDesc[i].width, "--");
-                break;
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-            // errors
-            case PARAM_ERROR:
-            case PARAM_ORTHO:
-                if (test)
-                    printf("  %*.2e", ParamDesc[i].width, pval[i].d);
-                else
-                    printf("  %*s", ParamDesc[i].width, "--");
-                break;
+    if (rank == 0) {
+        for (int i = 0; i < PARAM_SIZEOF; ++i) {
+            if (pval[i].used) {
+                switch (i) {
+                case PARAM_SUCCESS:
+                    if (test)
+                        printf("  %*s", ParamDesc[i].width, pval[i].i ? "pass" : "FAILED");
+                    else
+                        printf("  %*s", ParamDesc[i].width, "--");
+                    break;
 
-            // character parameters
-            case PARAM_TRANS:
-            case PARAM_TRANSA:
-            case PARAM_TRANSB:
-            case PARAM_SIDE:
-            case PARAM_UPLO:
-            case PARAM_DIAG:
-            case PARAM_COLROW:
-            case PARAM_NORM:
-            case PARAM_HMODE:
-                printf("  %*c", ParamDesc[i].width, pval[i].c);
-                break;
+                // errors
+                case PARAM_ERROR:
+                case PARAM_ORTHO:
+                    if (test)
+                        printf("  %*.2e", ParamDesc[i].width, pval[i].d);
+                    else
+                        printf("  %*s", ParamDesc[i].width, "--");
+                    break;
 
-            // dimensions
-            case PARAM_DIM:
-                if (pval[i].used & PARAM_USE_M)
-                    printf("  %*d", ParamDesc[i].width, pval[i].dim.m);
-                if (pval[i].used & PARAM_USE_N)
-                    printf("  %*d", ParamDesc[i].width, pval[i].dim.n);
-                if (pval[i].used & PARAM_USE_K)
-                    printf("  %*d", ParamDesc[i].width, pval[i].dim.k);
-                break;
+                // character parameters
+                case PARAM_TRANS:
+                case PARAM_TRANSA:
+                case PARAM_TRANSB:
+                case PARAM_SIDE:
+                case PARAM_UPLO:
+                case PARAM_DIAG:
+                case PARAM_COLROW:
+                case PARAM_NORM:
+                case PARAM_HMODE:
+                    printf("  %*c", ParamDesc[i].width, pval[i].c);
+                    break;
 
-            // integer parameters
-            case PARAM_KL:
-            case PARAM_KU:
-            case PARAM_NRHS:
-            case PARAM_NB:
-            case PARAM_IB:
-            case PARAM_PADA:
-            case PARAM_PADB:
-            case PARAM_PADC:
-            case PARAM_MTPF:
-            case PARAM_ZEROCOL:
-            case PARAM_INCX:
-            case PARAM_ITERSV:
-                printf("  %*d", ParamDesc[i].width, pval[i].i);
-                break;
+                // dimensions
+                case PARAM_DIM:
+                    if (pval[i].used & PARAM_USE_M)
+                        printf("  %*d", ParamDesc[i].width, pval[i].dim.m);
+                    if (pval[i].used & PARAM_USE_N)
+                        printf("  %*d", ParamDesc[i].width, pval[i].dim.n);
+                    if (pval[i].used & PARAM_USE_K)
+                        printf("  %*d", ParamDesc[i].width, pval[i].dim.k);
+                    break;
 
-            // double parameters
-            case PARAM_TIME:
-            case PARAM_GFLOPS:
-                printf("  %*.4f", ParamDesc[i].width, pval[i].d);
-                break;
+                // integer parameters
+                case PARAM_KL:
+                case PARAM_KU:
+                case PARAM_NRHS:
+                case PARAM_NB:
+                case PARAM_IB:
+                case PARAM_PADA:
+                case PARAM_PADB:
+                case PARAM_PADC:
+                case PARAM_MTPF:
+                case PARAM_ZEROCOL:
+                case PARAM_INCX:
+                case PARAM_ITERSV:
+                    printf("  %*d", ParamDesc[i].width, pval[i].i);
+                    break;
 
-            // complex parameters
-            case PARAM_ALPHA:
-            case PARAM_BETA:
-                assert(ParamDesc[i].width == 14);
-                printf("  %5.2f + %5.2fi",
-                       creal(pval[i].z), cimag(pval[i].z));
-                break;
+                // double parameters
+                case PARAM_TIME:
+                case PARAM_GFLOPS:
+                    printf("  %*.4f", ParamDesc[i].width, pval[i].d);
+                    break;
 
-            default:
-                fprintf(stderr, "\nunknown column %d\n", i);
-                assert(false);
-                break;
+                // complex parameters
+                case PARAM_ALPHA:
+                case PARAM_BETA:
+                    assert(ParamDesc[i].width == 14);
+                    printf("  %5.2f + %5.2fi",
+                           creal(pval[i].z), cimag(pval[i].z));
+                    break;
+
+                default:
+                    fprintf(stderr, "\nunknown column %d\n", i);
+                    assert(false);
+                    break;
+                }
             }
         }
+        printf("\n");
     }
-    printf("\n");
     return (pval[PARAM_SUCCESS].i == 0);
 }
 

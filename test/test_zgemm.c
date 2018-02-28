@@ -22,6 +22,7 @@
 #include <math.h>
 
 #include <omp.h>
+#include <mpi.h>
 
 #define COMPLEX
 
@@ -144,7 +145,9 @@ void test_zgemm(param_value_t param[], bool run)
     //================================================================
     // Run and time PLASMA.
     //================================================================
-    plasma_time_t start = omp_get_wtime();
+    plasma_context_t *plasma = plasma_context_self();
+    MPI_Barrier(plasma->comm);
+    plasma_time_t start = MPI_Wtime();
 
     plasma_zgemm(
         transa, transb,
@@ -153,11 +156,12 @@ void test_zgemm(param_value_t param[], bool run)
                B, ldb,
          beta, C, ldc);
 
-    plasma_time_t stop = omp_get_wtime();
+    MPI_Barrier(plasma->comm);
+    plasma_time_t stop = MPI_Wtime();
     plasma_time_t time = stop-start;
 
-    param[PARAM_TIME].d = time;
-    param[PARAM_GFLOPS].d = flops_zgemm(m, n, k) / time / 1e9;
+    param[PARAM_TIME].d = plasma->time;
+    param[PARAM_GFLOPS].d = flops_zgemm(m, n, k) / plasma->time / 1e9;
 
     //================================================================
     // Test results by comparing to a reference implementation.
@@ -170,31 +174,38 @@ void test_zgemm(param_value_t param[], bool run)
         // gamma_k = sqrt(k)*eps as a statistical average case.
         // Using 3*eps covers complex arithmetic.
         // See Higham, Accuracy and Stability of Numerical Algorithms, ch 2-3.
-        double work[1];
-        double Anorm = LAPACKE_zlange_work(
-                           LAPACK_COL_MAJOR, 'F', Am, An, A,    lda, work);
-        double Bnorm = LAPACKE_zlange_work(
-                           LAPACK_COL_MAJOR, 'F', Bm, Bn, B,    ldb, work);
-        double Cnorm = LAPACKE_zlange_work(
-                           LAPACK_COL_MAJOR, 'F', Cm, Cn, Cref, ldc, work);
+        double error;
+        int my_rank;
+        MPI_Comm_rank(plasma->comm, &my_rank);
+        if (my_rank == 0) {
+           double work[1];
+           double Anorm = LAPACKE_zlange_work(
+                              LAPACK_COL_MAJOR, 'F', Am, An, A,    lda, work);
+           double Bnorm = LAPACKE_zlange_work(
+                              LAPACK_COL_MAJOR, 'F', Bm, Bn, B,    ldb, work);
+           double Cnorm = LAPACKE_zlange_work(
+                              LAPACK_COL_MAJOR, 'F', Cm, Cn, Cref, ldc, work);
 
-        cblas_zgemm(
-            CblasColMajor,
-            (CBLAS_TRANSPOSE)transa, (CBLAS_TRANSPOSE)transb,
-            m, n, k,
-            CBLAS_SADDR(alpha), A, lda,
-                                B, ldb,
-             CBLAS_SADDR(beta), Cref, ldc);
+           cblas_zgemm(
+               CblasColMajor,
+               (CBLAS_TRANSPOSE)transa, (CBLAS_TRANSPOSE)transb,
+               m, n, k,
+               CBLAS_SADDR(alpha), A, lda,
+                                   B, ldb,
+                CBLAS_SADDR(beta), Cref, ldc);
 
-        plasma_complex64_t zmone = -1.0;
-        cblas_zaxpy((size_t)ldc*Cn, CBLAS_SADDR(zmone), Cref, 1, C, 1);
+           plasma_complex64_t zmone = -1.0;
+           cblas_zaxpy((size_t)ldc*Cn, CBLAS_SADDR(zmone), Cref, 1, C, 1);
 
-        double error = LAPACKE_zlange_work(
-                           LAPACK_COL_MAJOR, 'F', Cm, Cn, C,    ldc, work);
-        double normalize = sqrt((double)k+2) * cabs(alpha) * Anorm * Bnorm
-                         + 2 * cabs(beta) * Cnorm;
-        if (normalize != 0)
-            error /= normalize;
+           error = LAPACKE_zlange_work(
+                       LAPACK_COL_MAJOR, 'F', Cm, Cn, C,    ldc, work);
+           double normalize = sqrt((double)k+2) * cabs(alpha) * Anorm * Bnorm
+                            + 2 * cabs(beta) * Cnorm;
+           if (normalize != 0)
+               error /= normalize;
+
+        }
+        MPI_Bcast(&error, 1, MPI_DOUBLE, 0, plasma->comm);
 
         param[PARAM_ERROR].d = error;
         param[PARAM_SUCCESS].i = error < 3*eps;

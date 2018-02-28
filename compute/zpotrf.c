@@ -19,6 +19,9 @@
 #include "plasma_types.h"
 #include "plasma_workspace.h"
 
+#include <starpu.h>
+#include <starpu_mpi.h>
+#include <omp.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_potrf
@@ -129,17 +132,32 @@ int plasma_zpotrf(plasma_enum_t uplo,
     // Translate to tile layout.
     plasma_starpu_ztr2desc(pA, lda, A, &sequence, &request);
 
+    //Explicit synchronization for timing
+    starpu_task_wait_for_all();
+    double start = omp_get_wtime();
+
     // Call the tile async function.
     plasma_starpu_zpotrf(uplo, A, &sequence, &request);
+
+    // Enforce explicit tile update on owner
+    // plasma_starpu_data_acquire(&A);
+    starpu_task_wait_for_all();
+
+    double stop = omp_get_wtime();
+    plasma->time = stop-start;
 
     // Translate back to LAPACK layout.
     plasma_starpu_zdesc2tr(A, pA, lda, &sequence, &request);
 
-    // Synchronize.
-    starpu_task_wait_for_all();
-
     // Free matrices in tile layout.
     plasma_desc_destroy(&A);
+
+    // Wait for all tasks and communictions.
+    starpu_task_wait_for_all();
+    starpu_mpi_wait_for_all(plasma->comm);
+
+    // Synchronize across nodes.
+    starpu_mpi_barrier(plasma->comm);
 
     // Return status.
     int status = sequence.status;

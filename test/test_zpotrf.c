@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include <omp.h>
+#include <mpi.h>
 
 #define COMPLEX
 
@@ -110,46 +111,59 @@ void test_zpotrf(param_value_t param[], bool run)
     //================================================================
     // Run and time PLASMA.
     //================================================================
-    plasma_time_t start = omp_get_wtime();
+    plasma_context_t *plasma = plasma_context_self();
+    MPI_Barrier(plasma->comm);
+    plasma_time_t start = MPI_Wtime();
     int plainfo = plasma_zpotrf(uplo, n, A, lda);
-    plasma_time_t stop = omp_get_wtime();
+    MPI_Barrier(plasma->comm);
+    plasma_time_t stop = MPI_Wtime();
     plasma_time_t time = stop-start;
 
-    param[PARAM_TIME].d = time;
-    param[PARAM_GFLOPS].d = flops_zpotrf(n) / time / 1e9;
+    param[PARAM_TIME].d = plasma->time;
+    param[PARAM_GFLOPS].d = flops_zpotrf(n) / plasma->time / 1e9;
 
     //================================================================
     // Test results by comparing to a reference implementation.
     //================================================================
     if (test) {
-        int lapinfo = LAPACKE_zpotrf(LAPACK_COL_MAJOR,
-                                     lapack_const(uplo), n,
-                                     Aref, lda);
-        if (lapinfo == 0) {
-            plasma_complex64_t zmone = -1.0;
-            cblas_zaxpy((size_t)lda*n, CBLAS_SADDR(zmone), Aref, 1, A, 1);
+        double error;
+        int success;
+        int my_rank;
+        MPI_Comm_rank(plasma->comm, &my_rank);
+        if (my_rank == 0) {
+            int lapinfo = LAPACKE_zpotrf(LAPACK_COL_MAJOR,
+                                         lapack_const(uplo), n,
+                                         Aref, lda);
+            if (lapinfo == 0) {
+                plasma_complex64_t zmone = -1.0;
+                cblas_zaxpy((size_t)lda*n, CBLAS_SADDR(zmone), Aref, 1, A, 1);
 
-            double work[1];
-            double Anorm = LAPACKE_zlanhe_work(
-                LAPACK_COL_MAJOR, 'F', lapack_const(uplo), n, Aref, lda, work);
-            double error = LAPACKE_zlange_work(
-                LAPACK_COL_MAJOR, 'F', n, n, A, lda, work);
-            if (Anorm != 0)
-                error /= Anorm;
+                double work[1];
+                double Anorm = LAPACKE_zlanhe_work(
+                    LAPACK_COL_MAJOR, 'F', lapack_const(uplo), n, Aref, lda, work);
+                error = LAPACKE_zlange_work(
+                    LAPACK_COL_MAJOR, 'F', n, n, A, lda, work);
+                if (Anorm != 0)
+                    error /= Anorm;
 
-            param[PARAM_ERROR].d = error;
-            param[PARAM_SUCCESS].i = error < tol;
-        }
-        else {
-            if (plainfo == lapinfo) {
-                param[PARAM_ERROR].d = 0.0;
-                param[PARAM_SUCCESS].i = 1;
+                success = error < tol;
             }
             else {
-                param[PARAM_ERROR].d = INFINITY;
-                param[PARAM_SUCCESS].i = 0;
+                if (plainfo == lapinfo) {
+                    error = 0.0;
+                    success = 1;
+                }
+                else {
+                    error = INFINITY;
+                    success = 0;
+                }
             }
         }
+        MPI_Bcast(&error,   1, MPI_DOUBLE, 0, plasma->comm);
+        MPI_Bcast(&success, 1, MPI_INT,    0, plasma->comm);
+
+        param[PARAM_ERROR].d   = error;
+        param[PARAM_SUCCESS].i = success;
     }
 
     //================================================================

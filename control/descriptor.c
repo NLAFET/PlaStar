@@ -11,6 +11,11 @@
 #include "plasma_context.h"
 #include "plasma_descriptor.h"
 #include "plasma_internal.h"
+#include "plasma_distributed.h"
+#include "core_blas.h"
+
+#include <starpu.h>
+#include <starpu_mpi.h>
 
 /******************************************************************************/
 int plasma_desc_general_create(plasma_enum_t precision, int mb, int nb,
@@ -437,6 +442,13 @@ int plasma_descT_create(plasma_desc_t A, int ib, plasma_enum_t householder_mode,
 /******************************************************************************/
 int plasma_desc_handles_create(plasma_desc_t *A)
 {
+    // Get PLASMA context.
+    plasma_context_t *plasma = plasma_context_self();
+    if (plasma == NULL) {
+        plasma_error("PLASMA not initialized");
+        return PlasmaErrorNotInitialized;
+    }
+
     // Check the descriptor.
     int retval = plasma_desc_check(*A);
     if (retval != PlasmaSuccess) {
@@ -444,8 +456,23 @@ int plasma_desc_handles_create(plasma_desc_t *A)
         return PlasmaErrorIllegalValue;
     }
 
+    // Add MPI properties to descriptors.
+    int nproc;
+    MPI_Comm_size(plasma->comm, &nproc);
+
+    // Set grid of processes.
+    int p, q;
+    plasma_get_process_grid_dimension(nproc, &p, &q);
+
+    retval = plasma_desc_set_dist(plasma->comm, p, q,
+                                  plasma_owner_1D_block_cyclic, A);
+    if (retval != PlasmaSuccess) {
+        plasma_error("plasma_desc_set_dist() failed");
+        return PlasmaErrorIllegalValue;
+    }
+
     // Allocate the handles.
-    size_t size = (size_t) A->mt * A->nt * sizeof(starpu_data_handle_t);
+    size_t size = (size_t) A->gmt * A->gnt * sizeof(starpu_data_handle_t);
     A->tile_handles = (starpu_data_handle_t *) malloc(size);
     if (A->tile_handles == NULL) {
         plasma_error("plasma_desc_handles_create() failed");
@@ -454,18 +481,48 @@ int plasma_desc_handles_create(plasma_desc_t *A)
 
     size_t eltsize = plasma_element_size(A->precision);
 
+    int rank;
+
+    static int64_t plasma_data_tag = 0;
+
+    MPI_Comm_rank(A->comm, &rank);
+
     // Initialize the handles to tiles.
-    for (int j = 0; j < A->nt; j++) {
-        for (int i = 0; i < A->mt; i++) {
+    for (int j = 0; j < A->gnt; j++) {
+        for (int i = 0; i < A->gmt; i++) {
 
             int ldai = plasma_tile_mmain(*A, i);
             int mai  = plasma_tile_mview(*A, i);
             int naj  = plasma_tile_nview(*A, j);
 
-            starpu_matrix_data_register(&((A->tile_handles)[j*A->mt + i]),
-                                        STARPU_MAIN_RAM,
-                                        (uintptr_t) plasma_tile_addr(*A, i, j),
+            int index = j*A->gmt + i;
+            starpu_data_handle_t *handle = &(A->tile_handles)[index];
+            int remote_memory = -1;
+            //int owner = 0;
+            int owner = (A->tile_owner)(A->p, A->q, A->gmt, A->gnt, i, j);
+            plasma_complex64_t *data_pointer = NULL;
+
+            // debug
+            //printf("p %d, q %d, i %d, j %d owner %d, rank %d \n", A->p, A->q, i, j, owner, rank);
+
+            if (rank == owner) {
+                remote_memory = STARPU_MAIN_RAM;
+                data_pointer = plasma_tile_addr(*A, i, j);
+            }
+
+            starpu_matrix_data_register(handle,
+                                        remote_memory,
+                                        (uintptr_t) data_pointer,
                                         ldai, mai, naj, eltsize);
+
+            //if (rank == owner) {
+            // zero tag once it got to its limits
+            if (plasma_data_tag == 2147483647) {
+                plasma_data_tag = 0;
+            }
+            plasma_data_tag += 1;
+            starpu_mpi_data_register(*handle, plasma_data_tag, owner);
+            //}
         }
     }
 
@@ -482,11 +539,18 @@ int plasma_desc_handles_destroy(plasma_desc_t *A)
         return PlasmaErrorIllegalValue;
     }
 
-    // Unregister the handles to tiles.
-    for (int j = 0; j < A->nt; j++) {
-        for (int i = 0; i < A->mt; i++) {
+    int rank;
+    MPI_Comm_rank(A->comm, &rank);
 
-            starpu_data_unregister((A->tile_handles)[j*A->mt + i]);
+    // Unregister the handles to tiles.
+    for (int j = A->j; j < A->nt; j++) {
+        for (int i = A->i; i < A->mt; i++) {
+
+            int index = j*A->gmt + i;
+
+            starpu_data_handle_t *handle = &(A->tile_handles)[index];
+
+            starpu_data_unregister(*handle);
         }
     }
 
@@ -500,3 +564,79 @@ int plasma_desc_handles_destroy(plasma_desc_t *A)
 
     return PlasmaSuccess;
 }
+
+/******************************************************************************/
+int plasma_desc_set_dist(MPI_Comm comm, int p, int q,
+                         int (*tile_owner)(int p, int q, int m, int n,
+                             int i, int j),
+                         plasma_desc_t *A)
+{
+    A->comm = comm;
+    A->p = p;
+    A->q = q;
+    A->tile_owner = tile_owner; 
+
+    return PlasmaSuccess;
+}
+
+/******************************************************************************/
+int plasma_desc_populate_nonlocal_tiles(plasma_desc_t *A)
+{
+    int rank;
+    MPI_Comm_rank(A->comm, &rank);
+    
+    for (int i = 0; i < A->mt; i++) {
+        for (int j = 0; j < A->nt; j++) {
+            int owner = (A->tile_owner)(A->p, A->q, A->mt, A->nt, i, j);
+            plasma_complex64_t *pointer = plasma_tile_addr(*A, i, j);
+
+            int naj = plasma_tile_nview(*A, j);
+            int lda = plasma_tile_mmain(*A, i);
+
+            MPI_Datatype mpi_type;
+            if      (A->precision == PlasmaComplexDouble) {
+                mpi_type = MPI_DOUBLE_COMPLEX;
+            }
+            else if (A->precision == PlasmaComplexFloat) {
+                mpi_type = MPI_COMPLEX;
+            }
+            else if (A->precision == PlasmaRealDouble) {
+                mpi_type = MPI_DOUBLE;
+            }
+            else if (A->precision == PlasmaRealFloat) {
+                mpi_type = MPI_FLOAT;
+            }
+            else {
+                return PlasmaErrorIllegalValue;
+            }
+
+            MPI_Bcast(pointer, lda*naj, mpi_type,
+                      owner, MPI_COMM_WORLD);
+        }
+    }
+
+    return PlasmaSuccess;
+}
+
+
+int plasma_starpu_data_acquire(plasma_desc_t *A)
+{
+    int rank;
+    MPI_Comm_rank(A->comm, &rank);
+
+    for (int i = 0; i < A->mt; i++) {
+        for (int j = 0; j < A->nt; j++) {
+            int index = j*A->gmt + i;
+            starpu_data_handle_t *handle = &(A->tile_handles)[index];
+            int owner = (A->tile_owner)(A->p, A->q, A->gmt, A->gnt, i, j);
+
+            if ((owner != rank) || (*handle == NULL)) {
+                continue;
+            }
+            starpu_data_acquire(*handle, STARPU_R);
+            starpu_data_release(*handle);
+        }
+    }
+    return PlasmaSuccess;
+}
+

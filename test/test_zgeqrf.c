@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include <omp.h>
+#include <mpi.h>
 
 #define COMPLEX
 
@@ -63,7 +64,7 @@ void test_zgeqrf(param_value_t param[], bool run)
     //================================================================
     plasma_set(PlasmaTuning, PlasmaDisabled);
     plasma_set(PlasmaNb, param[PARAM_NB].i);
-    plasma_set(PlasmaIb, param[PARAM_IB].i);
+    plasma_set(PlasmaIb, param[PARAM_NB].i/4); // Set IB = NB/4
     if (param[PARAM_HMODE].c == 't')
         plasma_set(PlasmaHouseholderMode, PlasmaTreeHouseholder);
     else
@@ -98,18 +99,35 @@ void test_zgeqrf(param_value_t param[], bool run)
     //================================================================
     // Run and time PLASMA.
     //================================================================
-    plasma_time_t start = omp_get_wtime();
+    plasma_context_t *plasma = plasma_context_self();
+    MPI_Barrier(plasma->comm);
+    plasma_time_t start = MPI_Wtime();
+
     plasma_zgeqrf(m, n, A, lda, &T);
-    plasma_time_t stop = omp_get_wtime();
+
+    MPI_Barrier(plasma->comm);
+    plasma_time_t stop = MPI_Wtime();
     plasma_time_t time = stop-start;
 
-    param[PARAM_TIME].d = time;
-    param[PARAM_GFLOPS].d = flops_zgeqrf(m, n) / time / 1e9;
+    param[PARAM_TIME].d = plasma->time;
+    param[PARAM_GFLOPS].d = flops_zgeqrf(m, n) / plasma->time / 1e9;
 
     //=================================================================
     // Test results by checking orthogonality of Q and precision of Q*R
     //=================================================================
     if (test) {
+
+        double error;
+        double ortho;
+        int success;
+        int my_rank;
+        MPI_Comm_rank(plasma->comm, &my_rank);
+
+        // At this point, only root contains the matrix,
+        // broadcast it to everyone.
+        int size = lda*n*sizeof(plasma_complex64_t);
+        MPI_Bcast(A, size, MPI_CHAR, 0, plasma->comm);
+
         // Check the orthogonality of Q
         int minmn = imin(m, n);
 
@@ -122,30 +140,35 @@ void test_zgeqrf(param_value_t param[], bool run)
         // Build Q.
         plasma_zungqr(m, minmn, minmn, A, lda, T, Q, ldq);
 
-        // Build the identity matrix
-        plasma_complex64_t *Id =
-            (plasma_complex64_t *) malloc((size_t)minmn*minmn*
-                                          sizeof(plasma_complex64_t));
-        LAPACKE_zlaset_work(LAPACK_COL_MAJOR, 'g', minmn, minmn,
-                            0.0, 1.0, Id, minmn);
+        if (my_rank == 0) {
+            // Build the identity matrix
+            plasma_complex64_t *Id =
+                (plasma_complex64_t *) malloc((size_t)minmn*minmn*
+                                              sizeof(plasma_complex64_t));
+            LAPACKE_zlaset_work(LAPACK_COL_MAJOR, 'g', minmn, minmn,
+                                0.0, 1.0, Id, minmn);
 
-        // Perform Id - Q^H * Q
-        cblas_zherk(CblasColMajor, CblasUpper, CblasConjTrans, minmn, m,
-                    -1.0, Q, ldq, 1.0, Id, minmn);
+            // Perform Id - Q^H * Q
+            cblas_zherk(CblasColMajor, CblasUpper, CblasConjTrans, minmn, m,
+                        -1.0, Q, ldq, 1.0, Id, minmn);
 
-        // work array of size m is needed for computing L_oo norm
-        double *work = (double *) malloc((size_t)m*sizeof(double));
+            // work array of size m is needed for computing L_oo norm
+            double *work = (double *) malloc((size_t)m*sizeof(double));
 
-        // |Id - Q^H * Q|_oo
-        double ortho = LAPACKE_zlanhe_work(LAPACK_COL_MAJOR, 'I', 'u',
-                                           minmn, Id, minmn, work);
+            // |Id - Q^H * Q|_oo
+            ortho = LAPACKE_zlanhe_work(LAPACK_COL_MAJOR, 'I', 'u',
+                                        minmn, Id, minmn, work);
 
-        // normalize the result
-        // |Id - Q^H * Q|_oo / n
-        ortho /= minmn;
+            // normalize the result
+            // |Id - Q^H * Q|_oo / n
+            ortho /= minmn;
 
+            free(Id);
+            free(work);
+        }
         free(Q);
-        free(Id);
+
+        MPI_Bcast(&ortho,   1, MPI_DOUBLE, 0, plasma->comm);
 
         // Check the accuracy of A - Q * R
         // LAPACK version does not construct Q, it uses only application of it
@@ -162,30 +185,40 @@ void test_zgeqrf(param_value_t param[], bool run)
         plasma_zunmqr(PlasmaLeft, PlasmaNoTrans, m, n, minmn, A, lda, T,
                       R, m);
 
-        // Compute the difference.
-        // R = A - Q*R
-        for (int j = 0; j < n; j++)
-            for (int i = 0; i < m; i++)
-                R[j*m+i] = Aref[j*lda+i] - R[j*m+i];
+        if (my_rank == 0) {
+            // Compute the difference.
+            // R = A - Q*R
+            for (int j = 0; j < n; j++)
+                for (int i = 0; i < m; i++)
+                    R[j*m+i] = Aref[j*lda+i] - R[j*m+i];
 
-        // |A|_oo
-        double normA = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
-                                           Aref, lda, work);
+            // work array of size m is needed for computing L_oo norm
+            double *work = (double *) malloc((size_t)m*sizeof(double));
 
-        // |A - Q*R|_oo
-        double error = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
-                                               R, m, work);
+            // |A|_oo
+            double normA = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
+                                               Aref, lda, work);
 
-        // normalize the result
-        // |A-QR|_oo / (|A|_oo * n)
-        error /= (normA * n);
+            // |A - Q*R|_oo
+            error = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
+                                        R, m, work);
 
-        param[PARAM_ERROR].d = error;
-        param[PARAM_ORTHO].d = ortho;
-        param[PARAM_SUCCESS].i = (error < tol && ortho < tol);
+            // normalize the result
+            // |A-QR|_oo / (|A|_oo * n)
+            error /= (normA * n);
 
-        free(work);
+            success = (error < tol && ortho < tol);
+
+            free(work);
+        }
         free(R);
+
+        MPI_Bcast(&error,   1, MPI_DOUBLE, 0, plasma->comm);
+        MPI_Bcast(&success, 1, MPI_INT,    0, plasma->comm);
+
+        param[PARAM_ERROR].d   = error;
+        param[PARAM_ORTHO].d   = ortho;
+        param[PARAM_SUCCESS].i = success;
     }
 
     //================================================================

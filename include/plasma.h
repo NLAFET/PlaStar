@@ -14,6 +14,7 @@
 #include "plasma_descriptor.h"
 #include "plasma_context.h"
 #include "plasma_workspace.h"
+#include "plasma_distributed.h"
 
 #include "plasma_s.h"
 #include "plasma_d.h"

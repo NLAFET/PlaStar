@@ -19,6 +19,9 @@
 #include "plasma_types.h"
 #include "plasma_workspace.h"
 
+#include <starpu.h>
+#include <starpu_mpi.h>
+#include <omp.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_geqrf
@@ -145,19 +148,34 @@ int plasma_zgeqrf(int m, int n,
     // Translate to tile layout.
     plasma_starpu_zge2desc(pA, lda, A, &sequence, &request);
 
+    //Explicit synchronization for timing
+    starpu_task_wait_for_all();
+
+    double start = omp_get_wtime();
     // Call the tile async function.
     plasma_starpu_zgeqrf(A, *T, work, &sequence, &request);
 
+    // Enforce explicit tile update on owner
+    //plasma_starpu_data_acquire(&A);
+    
+    starpu_task_wait_for_all();
+    double stop = omp_get_wtime();
+    plasma->time = stop-start;
+    
     // Translate back to LAPACK layout.
     plasma_starpu_zdesc2ge(A, pA, lda, &sequence, &request);
-
-    // Synchronize.
-    starpu_task_wait_for_all();
 
     // Free matrix A in tile layout.
     plasma_desc_destroy(&A);
 
+    // Wait for all tasks and communictions.
+    starpu_task_wait_for_all();
+    //starpu_mpi_wait_for_all(plasma->comm);
+
     plasma_workspace_destroy(&work);
+
+    // Synchronize across nodes.
+    //starpu_mpi_barrier(plasma->comm);
 
     // Return status.
     int status = sequence.status;

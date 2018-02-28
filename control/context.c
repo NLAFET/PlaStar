@@ -11,9 +11,13 @@
 #include "plasma_context.h"
 #include "plasma_internal.h"
 #include "plasma_tuning.h"
+#include "plasma_distributed.h"
 
 #include <stdlib.h>
 #include <omp.h>
+
+#include <starpu.h>
+#include <starpu_mpi.h>
 
 static int max_contexts = 1024;
 static int num_contexts = 0;
@@ -44,10 +48,17 @@ int plasma_init()
 
     plasma_context_attach();
 
-    // Initialize StarPU.
-    int ret = starpu_init(NULL);
-    STARPU_CHECK_RETURN_VALUE(ret, "starpu_init error %d", 0);
+    plasma_mpi_init();
 
+    int ret;
+
+    ret = starpu_init(NULL);
+    STARPU_CHECK_RETURN_VALUE(ret, "starpu_init_error %d", 0);
+
+    ret = starpu_mpi_init(NULL, NULL, 0);
+    STARPU_CHECK_RETURN_VALUE(ret, "starpu_init_error %d", 0);
+
+    //_starpu_mpi_set_debug_level_max(1000);
     return PlasmaSuccess;
 }
 
@@ -57,8 +68,11 @@ int plasma_init()
 */
 int plasma_finalize()
 {
-    // Terminate StarPU, no task can be submitted after.
+    starpu_mpi_shutdown();
+
     starpu_shutdown();
+
+    plasma_mpi_finalize();
 
     plasma_context_detach();
     return PlasmaSuccess;
@@ -243,7 +257,7 @@ void plasma_context_init(plasma_context_t *context)
     context->nb = 256;
     context->ib = 64;
     context->inplace_outplace = PlasmaOutplace;
-    context->max_threads = starpu_cpu_worker_get_count();
+    context->max_threads = omp_get_max_threads();
     context->max_panel_threads = 1;
     context->householder_mode = PlasmaFlatHouseholder;
 

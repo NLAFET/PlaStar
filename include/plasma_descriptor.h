@@ -18,6 +18,8 @@
 
 #include <starpu.h>
 
+#include <mpi.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -78,6 +80,13 @@ typedef struct {
 
     // array of StarPU handles to tiles
     starpu_data_handle_t *tile_handles;
+
+    // related to distribution
+    MPI_Comm comm; ///< MPI_Communicator
+    int p;   ///< number of rows in a 2D processor grid
+    int q;   ///< number of columns in a 2D processor grid
+    // function describing ownership of a tile
+    int (*tile_owner) (int p, int q, int m, int n, int i, int j);
 
 } plasma_desc_t;
 
@@ -292,9 +301,20 @@ int plasma_descT_create(plasma_desc_t A, int ib, plasma_enum_t householder_mode,
 int plasma_desc_handles_create(plasma_desc_t *A);
 int plasma_desc_handles_destroy(plasma_desc_t *A);
 
+int plasma_desc_set_dist(MPI_Comm comm, int p, int q,
+                         int (*tile_owner)(int p, int q, int m, int n, int i, int j),
+                         plasma_desc_t *A);
+
+//static inline void *plasma_desc_handle_addr(plasma_desc_t A, int m, int n) {
+//    return (A.tile_handles)[n*A.gmt + m];
+//}
+
 static inline starpu_data_handle_t plasma_desc_handle(plasma_desc_t A, int m, int n) {
-    return (A.tile_handles)[n*A.mt + m];
+    return (A.tile_handles)[n*A.gmt + m];
 }
+
+int plasma_desc_populate_nonlocal_tiles(plasma_desc_t *A);
+int plasma_starpu_data_acquire(plasma_desc_t *A);
 
 #ifdef __cplusplus
 }  // extern "C"

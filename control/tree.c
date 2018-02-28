@@ -12,6 +12,7 @@
 #include "plasma_tree.h"
 
 #include <starpu.h>
+#include <starpu_mpi.h>
 
 void plasma_tree_flat_ts(int mt, int nt,
                          int **operations, int *num_operations,
@@ -83,6 +84,9 @@ void plasma_tree_operations(int mt, int nt,
     // Number of cores is useful for some algorithms.
     int ncores = starpu_cpu_worker_get_count();
 
+    int nproc;
+    starpu_mpi_comm_size(MPI_COMM_WORLD, &nproc);
+
     switch (tree_type) {
         case PlasmaTreeFlatTs:
             // Flat tree as in the standard geqrf routine.
@@ -110,12 +114,12 @@ void plasma_tree_operations(int mt, int nt,
         case PlasmaTreeAuto:
             // Binary tree of flat trees, with changing size of the flat trees in each
             // column.
-            plasma_tree_auto(mt, nt, operations, num_operations, ncores,
+            plasma_tree_auto(mt, nt, operations, num_operations, ncores*nproc,
                              sequence, request);
             break;
         case PlasmaTreeBlockGreedy:
             // Greedy tree of flat trees.
-            plasma_tree_block_greedy(mt, nt, operations, num_operations, ncores,
+            plasma_tree_block_greedy(mt, nt, operations, num_operations, ncores*nproc,
                                      sequence, request);
             break;
         default:
