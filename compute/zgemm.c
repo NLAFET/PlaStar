@@ -238,10 +238,6 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
                                B,
                         beta,  C,
                         &sequence, &request);
-
-    // Enforce explicit tile update on owner
-    //plasma_starpu_data_acquire(&C);
-    
     starpu_task_wait_for_all();
     double stop = omp_get_wtime();
     plasma->time = stop-start;

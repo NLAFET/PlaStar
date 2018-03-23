@@ -16,6 +16,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 // for memset function
 #include <string.h>
@@ -114,18 +115,31 @@ void core_starpu_zlaset(
     plasma_complex64_t alpha, plasma_complex64_t beta,
     starpu_data_handle_t A)
 {
-    starpu_insert_task(
-        &core_starpu_codelet_zlaset, 
-        STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
-        STARPU_VALUE,    &mb,                sizeof(int),
-        STARPU_VALUE,    &nb,                sizeof(int),
-        STARPU_VALUE,    &i,                 sizeof(int),
-        STARPU_VALUE,    &j,                 sizeof(int),
-        STARPU_VALUE,    &m,                 sizeof(int),
-        STARPU_VALUE,    &n,                 sizeof(int),
-        STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
-        STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
-        STARPU_W,        A,
-        STARPU_NAME, "zlaset",
-        0);
+    int owner_A = starpu_mpi_data_get_rank(A);
+
+    int execution_rank = owner_A;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+//    if (owner_A == my_rank ||
+//        execution_rank == my_rank) {
+
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            &core_starpu_codelet_zlaset, 
+            STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
+            STARPU_VALUE,    &mb,                sizeof(int),
+            STARPU_VALUE,    &nb,                sizeof(int),
+            STARPU_VALUE,    &i,                 sizeof(int),
+            STARPU_VALUE,    &j,                 sizeof(int),
+            STARPU_VALUE,    &m,                 sizeof(int),
+            STARPU_VALUE,    &n,                 sizeof(int),
+            STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
+            STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
+            STARPU_W,        A,
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "zlaset",
+            0);
+//    }
 }

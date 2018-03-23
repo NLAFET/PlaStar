@@ -16,6 +16,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 /***************************************************************************//**
  *
@@ -302,25 +303,46 @@ void core_starpu_ztsmqr(plasma_enum_t side, plasma_enum_t trans,
                         plasma_workspace_t work,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
-        &core_starpu_codelet_ztsmqr,
-        STARPU_VALUE,    &side,              sizeof(plasma_enum_t),
-        STARPU_VALUE,    &trans,             sizeof(plasma_enum_t),
-        STARPU_VALUE,    &m1,                sizeof(int),
-        STARPU_VALUE,    &n1,                sizeof(int),
-        STARPU_VALUE,    &m2,                sizeof(int),
-        STARPU_VALUE,    &n2,                sizeof(int),
-        STARPU_VALUE,    &k,                 sizeof(int),
-        STARPU_VALUE,    &ib,                sizeof(int),
-        STARPU_RW,       A1,
-        STARPU_VALUE,    &lda1,              sizeof(int),
-        STARPU_RW,       A2,
-        STARPU_VALUE,    &lda2,              sizeof(int),
-        STARPU_R,        V,
-        STARPU_VALUE,    &ldv,               sizeof(int),
-        STARPU_R,        T,
-        STARPU_VALUE,    &ldt,               sizeof(int),
-        STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
-        STARPU_NAME, "ztsmqr",
-        0);
+    int owner_A1 = starpu_mpi_data_get_rank(A1);
+    int owner_A2 = starpu_mpi_data_get_rank(A2);
+    int owner_V  = starpu_mpi_data_get_rank(V);
+    int owner_T  = starpu_mpi_data_get_rank(T);
+
+    assert(owner_T == owner_V);
+
+    int execution_rank = owner_A2;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    if (owner_A1 == my_rank ||
+        owner_A2 == my_rank ||
+        owner_V  == my_rank ||
+        owner_T  == my_rank ||
+        execution_rank == my_rank) {
+
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            &core_starpu_codelet_ztsmqr,
+            STARPU_VALUE,    &side,              sizeof(plasma_enum_t),
+            STARPU_VALUE,    &trans,             sizeof(plasma_enum_t),
+            STARPU_VALUE,    &m1,                sizeof(int),
+            STARPU_VALUE,    &n1,                sizeof(int),
+            STARPU_VALUE,    &m2,                sizeof(int),
+            STARPU_VALUE,    &n2,                sizeof(int),
+            STARPU_VALUE,    &k,                 sizeof(int),
+            STARPU_VALUE,    &ib,                sizeof(int),
+            STARPU_RW,       A1,
+            STARPU_VALUE,    &lda1,              sizeof(int),
+            STARPU_RW,       A2,
+            STARPU_VALUE,    &lda2,              sizeof(int),
+            STARPU_R,        V,
+            STARPU_VALUE,    &ldv,               sizeof(int),
+            STARPU_R,        T,
+            STARPU_VALUE,    &ldt,               sizeof(int),
+            STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "ztsmqr",
+            0);
+    }
 }

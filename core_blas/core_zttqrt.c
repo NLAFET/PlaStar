@@ -16,7 +16,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
-
+#include "starpu_mpi.h"
 
 // This will be swapped during the automatic code generation.
 #undef REAL
@@ -283,7 +283,25 @@ void core_starpu_zttqrt(int m, int n, int ib,
                         plasma_workspace_t work,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
+    //int owner_A1 = starpu_mpi_data_get_rank(A1);
+    int owner_A2 = starpu_mpi_data_get_rank(A2);
+    int owner_T  = starpu_mpi_data_get_rank(T);
+
+    //assert(owner_T == owner_A2);
+
+    int execution_rank = owner_A2;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    // cannot prune here to get the correct DAG and data coherency
+    //if (owner_A1 == my_rank ||
+    //    owner_A2 == my_rank ||
+    //    owner_T  == my_rank ||
+    //    execution_rank == my_rank) {
+
+    starpu_mpi_insert_task(
+        MPI_COMM_WORLD,
         &core_starpu_codelet_zttqrt,
         STARPU_VALUE,    &m,                 sizeof(int),
         STARPU_VALUE,    &n,                 sizeof(int),
@@ -295,7 +313,8 @@ void core_starpu_zttqrt(int m, int n, int ib,
         STARPU_W,        T,
         STARPU_VALUE,    &ldt,               sizeof(int),
         STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
+        STARPU_EXECUTE_ON_NODE, execution_rank,
         STARPU_NAME, "zttqrt",
         0);
+    //}
 }
-

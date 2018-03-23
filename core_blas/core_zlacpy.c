@@ -16,6 +16,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 /***************************************************************************//**
  *
@@ -131,7 +132,7 @@ static void core_starpu_cpu_zlacpy_forward(void *descr[], void *cl_arg)
     core_zlacpy(uplo, transa,
                 y2-y1, x2-x1,
                 &(A[x1*lda+y1]), lda,
-                &(B[x1*lda+y1]), ldb);
+                &(B[x1*ldb+y1]), ldb);
 }
 
 static void core_starpu_cpu_zlacpy_backward(void *descr[], void *cl_arg)
@@ -152,7 +153,7 @@ static void core_starpu_cpu_zlacpy_backward(void *descr[], void *cl_arg)
     // Call the kernel.
     core_zlacpy(uplo, transa,
                 y2-y1, x2-x1,
-                &(B[x1*lda+y1]), ldb,
+                &(B[x1*ldb+y1]), ldb,
                 &(A[x1*lda+y1]), lda);
 }
 
@@ -179,20 +180,33 @@ void core_starpu_zlacpy(
     starpu_data_handle_t B, int ldb,
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
-        (direction == PlasmaForward) ? 
-            &core_starpu_codelet_zlacpy_forward : 
-            &core_starpu_codelet_zlacpy_backward,
-        STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
-        STARPU_VALUE,    &transa,            sizeof(plasma_enum_t),
-        STARPU_VALUE,    &x1,                sizeof(int),
-        STARPU_VALUE,    &x2,                sizeof(int),
-        STARPU_VALUE,    &y1,                sizeof(int),
-        STARPU_VALUE,    &y2,                sizeof(int),
-        STARPU_VALUE,    &A,                 sizeof(plasma_complex64_t*),
-        STARPU_VALUE,    &lda,               sizeof(int),
-        (direction == PlasmaForward) ? STARPU_W : STARPU_R, B,
-        STARPU_VALUE,    &ldb,               sizeof(int),
-        STARPU_NAME, "zlacpy",
-        0);
+    int owner = starpu_mpi_data_get_rank(B);
+
+    int execution_rank = (direction == PlasmaForward) ? owner : 0;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    if (owner          == my_rank ||
+        execution_rank == my_rank) {
+
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            (direction == PlasmaForward) ? 
+                &core_starpu_codelet_zlacpy_forward : 
+                &core_starpu_codelet_zlacpy_backward,
+            STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
+            STARPU_VALUE,    &transa,            sizeof(plasma_enum_t),
+            STARPU_VALUE,    &x1,                sizeof(int),
+            STARPU_VALUE,    &x2,                sizeof(int),
+            STARPU_VALUE,    &y1,                sizeof(int),
+            STARPU_VALUE,    &y2,                sizeof(int),
+            STARPU_VALUE,    &A,                 sizeof(plasma_complex64_t*),
+            STARPU_VALUE,    &lda,               sizeof(int),
+            (direction == PlasmaForward) ? STARPU_W : STARPU_R, B,
+            STARPU_VALUE,    &ldb,               sizeof(int),
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "zlacpy",
+            0);
+    }
 }

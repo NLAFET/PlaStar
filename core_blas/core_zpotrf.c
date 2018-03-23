@@ -15,6 +15,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 /***************************************************************************//**
  *
@@ -98,12 +99,23 @@ void core_starpu_zpotrf(plasma_enum_t uplo,
                         starpu_data_handle_t A, int lda,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
-        &core_starpu_codelet_zpotrf,
-        STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
-        STARPU_VALUE,    &n,                 sizeof(int),
-        STARPU_RW,       A,
-        STARPU_VALUE,    &lda,               sizeof(int),
-        STARPU_NAME, "zpotrf",
-        0);
+    int owner = starpu_mpi_data_get_rank(A);
+
+    int execution_rank = owner;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    if (owner == my_rank) {
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            &core_starpu_codelet_zpotrf,
+            STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
+            STARPU_VALUE,    &n,                 sizeof(int),
+            STARPU_RW,       A,
+            STARPU_VALUE,    &lda,               sizeof(int),
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "zpotrf",
+            0);
+    }
 }

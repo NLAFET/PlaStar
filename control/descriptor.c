@@ -619,24 +619,4 @@ int plasma_desc_populate_nonlocal_tiles(plasma_desc_t *A)
 }
 
 
-int plasma_starpu_data_acquire(plasma_desc_t *A)
-{
-    int rank;
-    MPI_Comm_rank(A->comm, &rank);
-
-    for (int i = 0; i < A->mt; i++) {
-        for (int j = 0; j < A->nt; j++) {
-            int index = j*A->gmt + i;
-            starpu_data_handle_t *handle = &(A->tile_handles)[index];
-            int owner = (A->tile_owner)(A->p, A->q, A->gmt, A->gnt, i, j);
-
-            if ((owner != rank) || (*handle == NULL)) {
-                continue;
-            }
-            starpu_data_acquire(*handle, STARPU_R);
-            starpu_data_release(*handle);
-        }
-    }
-    return PlasmaSuccess;
-}
 

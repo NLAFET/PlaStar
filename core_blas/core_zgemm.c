@@ -15,6 +15,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 /***************************************************************************//**
  *
@@ -148,21 +149,38 @@ void core_starpu_zgemm(
     plasma_complex64_t beta,  starpu_data_handle_t C, int ldc,
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
-        &core_starpu_codelet_zgemm,
-        STARPU_VALUE,    &transa,            sizeof(plasma_enum_t),
-        STARPU_VALUE,    &transb,            sizeof(plasma_enum_t),
-        STARPU_VALUE,    &m,                 sizeof(int),
-        STARPU_VALUE,    &n,                 sizeof(int),
-        STARPU_VALUE,    &k,                 sizeof(int),
-        STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
-        STARPU_R,        A,
-        STARPU_VALUE,    &lda,               sizeof(int),
-        STARPU_R,        B,
-        STARPU_VALUE,    &ldb,               sizeof(int),
-        STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
-        STARPU_RW,       C,
-        STARPU_VALUE,    &ldc,               sizeof(int),
-        STARPU_NAME, "zgemm",
-        0);
+    int owner_A = starpu_mpi_data_get_rank(A);
+    int owner_B = starpu_mpi_data_get_rank(B);
+    int owner_C = starpu_mpi_data_get_rank(C);
+
+    int execution_rank = owner_C;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    if (owner_A == my_rank ||
+        owner_B == my_rank ||
+        owner_C == my_rank ||
+        execution_rank == my_rank) {
+
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            &core_starpu_codelet_zgemm,
+            STARPU_VALUE,    &transa,            sizeof(plasma_enum_t),
+            STARPU_VALUE,    &transb,            sizeof(plasma_enum_t),
+            STARPU_VALUE,    &m,                 sizeof(int),
+            STARPU_VALUE,    &n,                 sizeof(int),
+            STARPU_VALUE,    &k,                 sizeof(int),
+            STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
+            STARPU_R,        A,
+            STARPU_VALUE,    &lda,               sizeof(int),
+            STARPU_R,        B,
+            STARPU_VALUE,    &ldb,               sizeof(int),
+            STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
+            STARPU_RW,       C,
+            STARPU_VALUE,    &ldc,               sizeof(int),
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "zgemm",
+            0);
+    }
 }

@@ -16,6 +16,7 @@
 #include "core_lapack.h"
 
 #include "starpu.h"
+#include "starpu_mpi.h"
 
 /***************************************************************************//**
  *
@@ -284,21 +285,40 @@ void core_starpu_zunmqr(plasma_enum_t side, plasma_enum_t trans,
                         plasma_workspace_t work,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    starpu_insert_task(
-        &core_starpu_codelet_zunmqr,
-        STARPU_VALUE,    &side,              sizeof(plasma_enum_t),
-        STARPU_VALUE,    &trans,             sizeof(plasma_enum_t),
-        STARPU_VALUE,    &m,                 sizeof(int),
-        STARPU_VALUE,    &n,                 sizeof(int),
-        STARPU_VALUE,    &k,                 sizeof(int),
-        STARPU_VALUE,    &ib,                sizeof(int),
-        STARPU_R,        A,
-        STARPU_VALUE,    &lda,               sizeof(int),
-        STARPU_R,        T,
-        STARPU_VALUE,    &ldt,               sizeof(int),
-        STARPU_RW,       C,
-        STARPU_VALUE,    &ldc,               sizeof(int),
-        STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
-        STARPU_NAME, "zunmqr",
-        0);
+    int owner_A = starpu_mpi_data_get_rank(A);
+    int owner_T = starpu_mpi_data_get_rank(T);
+    int owner_C = starpu_mpi_data_get_rank(C);
+
+    assert(owner_T == owner_A);
+
+    int execution_rank = owner_C;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    if (owner_A == my_rank ||
+        owner_T == my_rank ||
+        owner_C == my_rank ||
+        execution_rank == my_rank) {
+
+        starpu_mpi_insert_task(
+            MPI_COMM_WORLD,
+            &core_starpu_codelet_zunmqr,
+            STARPU_VALUE,    &side,              sizeof(plasma_enum_t),
+            STARPU_VALUE,    &trans,             sizeof(plasma_enum_t),
+            STARPU_VALUE,    &m,                 sizeof(int),
+            STARPU_VALUE,    &n,                 sizeof(int),
+            STARPU_VALUE,    &k,                 sizeof(int),
+            STARPU_VALUE,    &ib,                sizeof(int),
+            STARPU_R,        A,
+            STARPU_VALUE,    &lda,               sizeof(int),
+            STARPU_R,        T,
+            STARPU_VALUE,    &ldt,               sizeof(int),
+            STARPU_RW,       C,
+            STARPU_VALUE,    &ldc,               sizeof(int),
+            STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
+            STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_NAME, "zunmqr",
+            0);
+    }
 }

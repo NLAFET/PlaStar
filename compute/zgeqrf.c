@@ -155,9 +155,6 @@ int plasma_zgeqrf(int m, int n,
     // Call the tile async function.
     plasma_starpu_zgeqrf(A, *T, work, &sequence, &request);
 
-    // Enforce explicit tile update on owner
-    //plasma_starpu_data_acquire(&A);
-    
     starpu_task_wait_for_all();
     double stop = omp_get_wtime();
     plasma->time = stop-start;

@@ -138,9 +138,6 @@ int plasma_zpotrf(plasma_enum_t uplo,
 
     // Call the tile async function.
     plasma_starpu_zpotrf(uplo, A, &sequence, &request);
-
-    // Enforce explicit tile update on owner
-    // plasma_starpu_data_acquire(&A);
     starpu_task_wait_for_all();
 
     double stop = omp_get_wtime();
