@@ -1,5 +1,4 @@
 # PLASMA example make.inc, using Intel MKL and gcc
-#
 # PLASMA is a software package provided by:
 # University of Tennessee, US,
 # University of Manchester, UK.
@@ -24,8 +23,7 @@ RANLIB    = ranlib
 # can be commented out if making only static libraries.
 FPIC      = -fPIC
 
-#CFLAGS    = $(FPIC) -O3 -std=c99 -Wall -pedantic -Wshadow -Wunused-variable -Wno-unused-function
-CFLAGS    = $(FPIC) -O0 -g -std=gnu99 -Wall -pedantic -Wshadow -Wunused-variable -Wno-unused-function
+CFLAGS    = $(FPIC) -O3 -std=gnu99 -Wall -pedantic -Wshadow -Wunused-variable -Wno-unused-function
 FCFLAGS   = $(FPIC) -O3 --std=f2008 -Wall
 LDFLAGS   = -fopenmp $(FPIC)
 
@@ -48,8 +46,6 @@ fortran = 0
 
 # --------------------
 # StarPU
-#CFLAGS   += $(shell pkg-config --cflags starpu-1.2)
-#LIBS     += $(shell pkg-config --libs starpu-1.2)
 CFLAGS   += $(shell pkg-config --cflags starpumpi-1.2)
 LIBS     += $(shell pkg-config --libs starpumpi-1.2)
 

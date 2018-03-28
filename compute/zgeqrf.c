@@ -22,6 +22,7 @@
 #include <starpu.h>
 #include <starpu_mpi.h>
 #include <omp.h>
+#include <mpi.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_geqrf
@@ -150,13 +151,13 @@ int plasma_zgeqrf(int m, int n,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
-
-    double start = omp_get_wtime();
+    
+    double start = MPI_Wtime();
     // Call the tile async function.
     plasma_starpu_zgeqrf(A, *T, work, &sequence, &request);
 
     starpu_task_wait_for_all();
-    double stop = omp_get_wtime();
+    double stop = MPI_Wtime();
     plasma->time = stop-start;
     
     // Translate back to LAPACK layout.

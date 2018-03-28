@@ -22,6 +22,7 @@
 #include <starpu.h>
 #include <starpu_mpi.h>
 #include <omp.h>
+#include <mpi.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_gemm
@@ -230,7 +231,7 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
-    double start = omp_get_wtime();
+    double start = MPI_Wtime();
     
     // Call the tile async function.
     plasma_starpu_zgemm(transa, transb,
@@ -238,8 +239,11 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
                                B,
                         beta,  C,
                         &sequence, &request);
+
+    // Enforce explicit tile update on owner
+    
     starpu_task_wait_for_all();
-    double stop = omp_get_wtime();
+    double stop = MPI_Wtime();
     plasma->time = stop-start;
     
     // Translate back to LAPACK layout.

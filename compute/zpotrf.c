@@ -22,6 +22,7 @@
 #include <starpu.h>
 #include <starpu_mpi.h>
 #include <omp.h>
+#include <mpi.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_potrf
@@ -134,13 +135,14 @@ int plasma_zpotrf(plasma_enum_t uplo,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
-    double start = omp_get_wtime();
+    double start = MPI_Wtime();
 
     // Call the tile async function.
     plasma_starpu_zpotrf(uplo, A, &sequence, &request);
+ 
     starpu_task_wait_for_all();
 
-    double stop = omp_get_wtime();
+    double stop = MPI_Wtime();
     plasma->time = stop-start;
 
     // Translate back to LAPACK layout.
