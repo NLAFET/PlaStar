@@ -38,6 +38,8 @@ typedef struct {
     int mpi_outer_init;             ///< In distributed mode, was MPI
                                     ///  initialized before call to plasma_init?
     MPI_Comm comm;                  ///< MPI communicator to use
+    int p;                          ///< number of rows in process grid
+    int q;                          ///< number of columns in pr
     double time;                   ///< Computation time
 } plasma_context_t;
 

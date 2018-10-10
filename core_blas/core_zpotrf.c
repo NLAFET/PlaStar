@@ -1,5 +1,5 @@
 /**
- *
+1;4205;0c *
  * @file
  *
  *  PLASMA is a software package provided by:
@@ -16,6 +16,7 @@
 
 #include "starpu.h"
 #include "starpu_mpi.h"
+
 
 /***************************************************************************//**
  *
@@ -94,12 +95,16 @@ struct starpu_codelet core_starpu_codelet_zpotrf = {
 
 /******************************************************************************/
 // The function for task insertion.
+
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+
 void core_starpu_zpotrf(plasma_enum_t uplo,
                         int n,
-                        starpu_data_handle_t A, int lda,
+                        plasma_desc_t A, int Am, int An, int lda,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner = starpu_mpi_data_get_rank(A);
+    //int owner = starpu_mpi_data_get_rank(A);
+    int owner = (A.tile_owner)(A.p, A.q, Am, An);
 
     int execution_rank = owner;
 
@@ -112,9 +117,10 @@ void core_starpu_zpotrf(plasma_enum_t uplo,
             &core_starpu_codelet_zpotrf,
             STARPU_VALUE,    &uplo,              sizeof(plasma_enum_t),
             STARPU_VALUE,    &n,                 sizeof(int),
-            STARPU_RW,       A,
+            STARPU_RW,       A(Am, An),
             STARPU_VALUE,    &lda,               sizeof(int),
             STARPU_EXECUTE_ON_NODE, execution_rank,
+            STARPU_PRIORITY, STARPU_MAX_PRIO,
             STARPU_NAME, "zpotrf",
             0);
     }

@@ -82,7 +82,7 @@ int plasma_finalize()
 int plasma_set(plasma_enum_t param, int value)
 {
     plasma_context_t *plasma;
-
+    int nproc; 
     plasma = plasma_context_self();
     if (plasma == NULL) {
         plasma_error("PLASMA not initialized");
@@ -124,6 +124,19 @@ int plasma_set(plasma_enum_t param, int value)
         }
         plasma->householder_mode = value;
         break;
+    case PlasmaProcessRows:
+        MPI_Comm_size(plasma->comm, &nproc);
+        plasma->p = value;
+        if (plasma->p == 0) {
+            plasma_error("invalid process grid");
+            return PlasmaErrorIllegalValue;
+        }
+        plasma->q = nproc / plasma->p;
+        if (plasma->p*plasma->q != nproc) {
+            plasma_error("invalid process grid");
+            return PlasmaErrorIllegalValue;
+        }
+        break;
     default:
         plasma_error("unknown parameter");
         return PlasmaErrorIllegalValue;
@@ -157,6 +170,8 @@ int plasma_get(plasma_enum_t param, int *value)
     case PlasmaHouseholderMode:
         *value = plasma->householder_mode;
         return PlasmaSuccess;
+    case PlasmaProcessRows:
+        *value = plasma->p;
     default:
         plasma_error("Unknown parameter");
         return PlasmaErrorIllegalValue;

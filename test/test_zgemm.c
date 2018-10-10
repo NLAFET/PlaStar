@@ -1,5 +1,5 @@
 /**
- *
+1;4205;0c *
  * @file
  *
  *  PLASMA is a software package provided by:
@@ -23,6 +23,10 @@
 
 #include <omp.h>
 #include <mpi.h>
+
+#include <mkl_scalapack.h>
+#include <mkl_blacs.h>
+#include <mkl_pblas.h>
 
 #define COMPLEX
 
@@ -50,6 +54,7 @@ void test_zgemm(param_value_t param[], bool run)
     param[PARAM_PADB   ].used = true;
     param[PARAM_PADC   ].used = true;
     param[PARAM_NB     ].used = true;
+    param[PARAM_P      ].used = true;
     if (! run)
         return;
 
@@ -86,10 +91,6 @@ void test_zgemm(param_value_t param[], bool run)
     Cm = m;
     Cn = n;
 
-    int lda = imax(1, Am + param[PARAM_PADA].i);
-    int ldb = imax(1, Bm + param[PARAM_PADB].i);
-    int ldc = imax(1, Cm + param[PARAM_PADC].i);
-
     int test = param[PARAM_TEST].c == 'y';
     double eps = LAPACKE_dlamch('E');
 
@@ -101,68 +102,133 @@ void test_zgemm(param_value_t param[], bool run)
     double beta  = creal(param[PARAM_BETA].z);
 #endif
 
+    int nb = param[PARAM_NB].i;
+    
+    int p = param[PARAM_P].i;
+    
     //================================================================
     // Set tuning parameters.
     //================================================================
     plasma_set(PlasmaTuning, PlasmaDisabled);
     plasma_set(PlasmaNb, param[PARAM_NB].i);
+    plasma_set(PlasmaIb, param[PARAM_IB].i);
+    plasma_set(PlasmaProcessRows, p);
+
+    //================================================================
+    // Prepare ScaLAPACK environment.
+    //================================================================
+    plasma_context_t *plasma = plasma_context_self();
+
+    // Initialize BLACS.
+    int bl_rank, bl_nproc;
+    blacs_pinfo_(&bl_rank, &bl_nproc);
+
+    // Index of the BLACS context.
+    int icontxt = -1;
+    int what    =  0;
+    int ictxt;
+    blacs_get_(&icontxt, &what, &ictxt);
+
+    // Initialize BLACS grid.
+    int ip, jp;
+    blacs_gridinit_(&ictxt, "Column-major", &(plasma->p), &(plasma->q));
+    blacs_gridinfo_(&ictxt, &(plasma->p), &(plasma->q), &ip, &jp);
+
+    // Initialize ScaLAPACK descriptors.
+    int scal_descA[9], scal_descB[9], scal_descC[9];
 
     //================================================================
     // Allocate and initialize arrays.
     //================================================================
-    plasma_complex64_t *A =
-        (plasma_complex64_t*)malloc((size_t)lda*An*sizeof(plasma_complex64_t));
-    assert(A != NULL);
 
-    plasma_complex64_t *B =
-        (plasma_complex64_t*)malloc((size_t)ldb*Bn*sizeof(plasma_complex64_t));
-    assert(B != NULL);
+    int irsrc = 0;
+    int icsrc = 0;
+    int info;
 
-    plasma_complex64_t *C =
-        (plasma_complex64_t*)malloc((size_t)ldc*Cn*sizeof(plasma_complex64_t));
-    assert(C != NULL);
+    // A
+    int Am_loc = numroc_(&Am, &nb, &ip, &irsrc, &(plasma->p));
+    int llda = imax(1, Am_loc);
+    descinit_(scal_descA, &Am, &An, &nb, &nb, &irsrc, &icsrc, &ictxt,
+              &llda, &info);
+    int An_loc = numroc_(&An, &nb, &jp, &icsrc, &(plasma->q));
+    plasma_complex64_t *A_loc =
+        (plasma_complex64_t*)malloc((size_t)llda*An_loc*sizeof(plasma_complex64_t));
+    assert(A_loc != NULL);
 
-    int seed[] = {0, 0, 0, 1};
-    lapack_int retval;
-    retval = LAPACKE_zlarnv(1, seed, (size_t)lda*An, A);
-    assert(retval == 0);
+    // B
+    int Bm_loc = numroc_(&Bm, &nb, &ip, &irsrc, &(plasma->p));
+    int lldb = imax(1, Bm_loc);
+    descinit_(scal_descB, &Bm, &Bn, &nb, &nb, &irsrc, &icsrc, &ictxt,
+              &lldb, &info);
+    int Bn_loc = numroc_(&Bn, &nb, &jp, &icsrc, &(plasma->q));
+    plasma_complex64_t *B_loc =
+        (plasma_complex64_t*)malloc((size_t)lldb*Bn_loc*sizeof(plasma_complex64_t));
+    assert(B_loc != NULL);
 
-    retval = LAPACKE_zlarnv(1, seed, (size_t)ldb*Bn, B);
-    assert(retval == 0);
+    // C
+    int Cm_loc = numroc_(&Cm, &nb, &ip, &irsrc, &(plasma->p));
+    int lldc = imax(1, Cm_loc);
+    descinit_(scal_descC, &Cm, &Cn, &nb, &nb, &irsrc, &icsrc, &ictxt,
+              &lldc, &info);
+    int Cn_loc = numroc_(&Cn, &nb, &jp, &icsrc, &(plasma->q));
+    plasma_complex64_t *C_loc =
+        (plasma_complex64_t*)malloc((size_t)lldc*Cn_loc*sizeof(plasma_complex64_t));
+    assert(C_loc != NULL);
 
-    retval = LAPACKE_zlarnv(1, seed, (size_t)ldc*Cn, C);
-    assert(retval == 0);
 
-    plasma_complex64_t *Cref = NULL;
+    // Seed for ScaLAPACK matrix generation.
+    int iaseed = 100;
+    // Row and column offsets for local matrix generation.
+    int iroff = 0;
+    int icoff = 0;
+
+    pzmatgen_(&ictxt, "General", "No diagonal preference", &Am, &An, &nb, &nb,
+              A_loc, &llda, &irsrc, &icsrc, &iaseed,
+              &iroff, &Am_loc, &icoff, &An_loc,
+              &ip, &jp, &(plasma->p), &(plasma->q));
+
+    pzmatgen_(&ictxt, "General", "No diagonal preference", &Bm, &Bn, &nb, &nb,
+              B_loc, &lldb, &irsrc, &icsrc, &iaseed,
+              &iroff, &Bm_loc, &icoff, &Bn_loc,
+              &ip, &jp, &(plasma->p), &(plasma->q));
+
+    pzmatgen_(&ictxt, "General", "No diagonal preference", &Cm, &Cn, &nb, &nb,
+              C_loc, &lldc, &irsrc, &icsrc, &iaseed,
+              &iroff, &Cm_loc, &icoff, &Cn_loc,
+              &ip, &jp, &(plasma->p), &(plasma->q));
+
+
+    // Copy C for testing purposes.
+    plasma_complex64_t *Cref_loc = NULL;
     if (test) {
-        Cref = (plasma_complex64_t*)malloc(
-            (size_t)ldc*Cn*sizeof(plasma_complex64_t));
-        assert(Cref != NULL);
-
-        memcpy(Cref, C, (size_t)ldc*Cn*sizeof(plasma_complex64_t));
+        Cref_loc = (plasma_complex64_t*)
+            malloc((size_t)lldc*Cn_loc*sizeof(plasma_complex64_t));
+        assert(Cref_loc != NULL);
+        
+        memcpy(Cref_loc, C_loc, (size_t)lldc*Cn_loc*sizeof(plasma_complex64_t));
     }
 
     //================================================================
     // Run and time PLASMA.
     //================================================================
-    plasma_context_t *plasma = plasma_context_self();
     MPI_Barrier(plasma->comm);
     plasma_time_t start = MPI_Wtime();
-
+    
     plasma_zgemm(
         transa, transb,
         m, n, k,
-        alpha, A, lda,
-               B, ldb,
-         beta, C, ldc);
+        alpha, A_loc, llda,
+               B_loc, lldb,
+         beta, C_loc, lldc);
 
     MPI_Barrier(plasma->comm);
     plasma_time_t stop = MPI_Wtime();
     plasma_time_t time = stop-start;
 
-    param[PARAM_TIME].d = plasma->time;
-    param[PARAM_GFLOPS].d = flops_zgemm(m, n, k) / plasma->time / 1e9;
+    param[PARAM_TIME].d = time;
+    param[PARAM_GFLOPS].d = flops_zgemm(m, n, k) / time / 1e9;
 
+    
     //================================================================
     // Test results by comparing to a reference implementation.
     //================================================================
@@ -175,48 +241,62 @@ void test_zgemm(param_value_t param[], bool run)
         // Using 3*eps covers complex arithmetic.
         // See Higham, Accuracy and Stability of Numerical Algorithms, ch 2-3.
         double error;
-        int my_rank;
-        MPI_Comm_rank(plasma->comm, &my_rank);
-        if (my_rank == 0) {
-           double work[1];
-           double Anorm = LAPACKE_zlange_work(
-                              LAPACK_COL_MAJOR, 'F', Am, An, A,    lda, work);
-           double Bnorm = LAPACKE_zlange_work(
-                              LAPACK_COL_MAJOR, 'F', Bm, Bn, B,    ldb, work);
-           double Cnorm = LAPACKE_zlange_work(
-                              LAPACK_COL_MAJOR, 'F', Cm, Cn, Cref, ldc, work);
+        double work[1];
+        int ia = 1; 
+        int ja = 1;
+        
+        double Anorm = pzlange_("F", &Am, &An,
+                                A_loc, &ia, &ja, scal_descA,
+                                work);
+        MPI_Bcast(&Anorm, 1, MPI_DOUBLE, 0, plasma->comm);
 
-           cblas_zgemm(
-               CblasColMajor,
-               (CBLAS_TRANSPOSE)transa, (CBLAS_TRANSPOSE)transb,
-               m, n, k,
-               CBLAS_SADDR(alpha), A, lda,
-                                   B, ldb,
-                CBLAS_SADDR(beta), Cref, ldc);
+        int ib = 1; 
+        int jb = 1;
+        double Bnorm = pzlange_("F", &Bm, &Bn,
+                                B_loc, &ib, &jb, scal_descB,
+                                work);
+        MPI_Bcast(&Bnorm, 1, MPI_DOUBLE, 0, plasma->comm);
 
-           plasma_complex64_t zmone = -1.0;
-           cblas_zaxpy((size_t)ldc*Cn, CBLAS_SADDR(zmone), Cref, 1, C, 1);
+        int ic = 1; 
+        int jc = 1;
+        double Cnorm = pzlange_("F", &Cm, &Cn,
+                                Cref_loc, &ic, &jc, scal_descC,
+                                work);
+        MPI_Bcast(&Cnorm, 1, MPI_DOUBLE, 0, plasma->comm);
+        
+        pzgemm_("N", "N", &m, &n, &k,
+                &alpha,
+                A_loc, &ia, &ja, scal_descA,
+                B_loc, &ib, &jb, scal_descB,
+                &beta,
+                Cref_loc, &ic, &jc, scal_descC);
 
-           error = LAPACKE_zlange_work(
-                       LAPACK_COL_MAJOR, 'F', Cm, Cn, C,    ldc, work);
-           double normalize = sqrt((double)k+2) * cabs(alpha) * Anorm * Bnorm
-                            + 2 * cabs(beta) * Cnorm;
-           if (normalize != 0)
-               error /= normalize;
-
-        }
+        plasma_complex64_t zmone = -1.0;
+        cblas_zaxpy((size_t)lldc*Cn_loc, CBLAS_SADDR(zmone), Cref_loc, 1, C_loc, 1);
+        
+        error = pzlange_("F", &Cm, &Cn, C_loc, &ic, &jc,
+                         scal_descC, work);
         MPI_Bcast(&error, 1, MPI_DOUBLE, 0, plasma->comm);
+
+                double normalize = sqrt((double)k+2) * cabs(alpha) * Anorm * Bnorm
+                         + 2 * cabs(beta) * Cnorm;
+        if (normalize != 0)
+            error /= normalize;
+
 
         param[PARAM_ERROR].d = error;
         param[PARAM_SUCCESS].i = error < 3*eps;
     }
-
+    
+    // Destroy the process grid.
+    blacs_gridexit_(&ictxt);
+    
     //================================================================
     // Free arrays.
     //================================================================
-    free(A);
-    free(B);
-    free(C);
+    free(A_loc);
+    free(B_loc);
+    free(C_loc);
     if (test)
-        free(Cref);
+        free(Cref_loc);
 }

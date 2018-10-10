@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include <mkl_blacs.h>
 
 /******************************************************************************/
 typedef void (*test_func_ptr)(param_value_t param[], bool run);
@@ -191,7 +192,10 @@ static param_desc_t ParamDesc[] = {
 
     {"--incx=",            "incx",         4,     true,
      "1 to pivot forward, -1 to pivot backward [default: 1]"},
-
+    
+    {"--p=",               "proc. rows",  10,     true,
+     "number of process rows in the grid, q obtained from nproc [default: 1]"},
+    
     { NULL }  // last entry
 };
 
@@ -267,6 +271,11 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
+    // Clean-up BLACS.
+    int continue_mpi = 1;
+    blacs_exit_(&continue_mpi);
+
+    
     MPI_Finalize();
 
     return err;
@@ -467,6 +476,7 @@ int test_routine(const char *name, param_value_t pval[], bool test)
                 case PARAM_MTPF:
                 case PARAM_ZEROCOL:
                 case PARAM_INCX:
+                case PARAM_P:
                 case PARAM_ITERSV:
                     printf("  %*d", ParamDesc[i].width, pval[i].i);
                     break;
@@ -648,6 +658,8 @@ void param_read(int argc, char **argv, param_t param[])
             err = param_scan_int(strchr(argv[i], '=')+1, &param[PARAM_ZEROCOL]);
         else if (param_starts_with(argv[i], "--incx="))
             err = param_scan_int(strchr(argv[i], '=')+1, &param[PARAM_INCX]);
+        else if (param_starts_with(argv[i], "--p="))
+            err = param_scan_int(strchr(argv[i], '=')+1, &param[PARAM_P]);
 
         //--------------------------------------------------
         // Scan double precision parameters.
@@ -745,6 +757,9 @@ void param_read(int argc, char **argv, param_t param[])
     if (param[PARAM_INCX].num == 0)
         param_add_int(1, &param[PARAM_INCX]);
 
+    if (param[PARAM_P].num == 0)
+        param_add_int(1, &param[PARAM_P]);
+    
     //--------------------------------------------------
     // Set double precision parameters.
     //--------------------------------------------------

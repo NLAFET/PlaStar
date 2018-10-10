@@ -2,6 +2,7 @@
  *
  * @file
  *
+ *  PLASTAR = STARPU + PLASMA.
  *  PLASMA is a software package provided by:
  *  University of Tennessee, US,
  *  University of Manchester, UK.
@@ -22,6 +23,10 @@
 
 #include <omp.h>
 #include <mpi.h>
+
+#include <mkl_scalapack.h>
+#include <mkl_pblas.h>
+#include <mkl_blacs.h>
 
 #define COMPLEX
 
@@ -45,6 +50,7 @@ void test_zgeqrf(param_value_t param[], bool run)
     param[PARAM_NB     ].used = true;
     param[PARAM_IB     ].used = true;
     param[PARAM_HMODE  ].used = true;
+    param[PARAM_P      ].used = true;
     if (! run)
         return;
 
@@ -54,41 +60,86 @@ void test_zgeqrf(param_value_t param[], bool run)
     int m = param[PARAM_DIM].dim.m;
     int n = param[PARAM_DIM].dim.n;
 
-    int lda = imax(1, m + param[PARAM_PADA].i);
+    int nb = param[PARAM_NB].i;
 
     int test = param[PARAM_TEST].c == 'y';
     double tol = param[PARAM_TOL].d * LAPACKE_dlamch('E');
+
+    int p = param[PARAM_P].i;
 
     //================================================================
     // Set tuning parameters.
     //================================================================
     plasma_set(PlasmaTuning, PlasmaDisabled);
-    plasma_set(PlasmaNb, param[PARAM_NB].i);
-    plasma_set(PlasmaIb, param[PARAM_NB].i/4); // Set IB = NB/4
+    plasma_set(PlasmaNb, nb);
+    //plasma_set(PlasmaIb, param[PARAM_IB].i); // Set IB = NB/4
+    plasma_set(PlasmaIb, param[PARAM_NB].i / 4); // Set IB = NB/4
     if (param[PARAM_HMODE].c == 't')
         plasma_set(PlasmaHouseholderMode, PlasmaTreeHouseholder);
     else
         plasma_set(PlasmaHouseholderMode, PlasmaFlatHouseholder);
 
+    plasma_set(PlasmaProcessRows, p);
+
+    //================================================================
+    // Prepare ScaLAPACK environment.
+    //================================================================
+    plasma_context_t *plasma = plasma_context_self();
+
+    // Initialize BLACS.
+    int bl_rank, bl_nproc;
+    blacs_pinfo_(&bl_rank, &bl_nproc);
+
+    // Index of the BLACS context.
+    int icontxt = -1;
+    int what    =  0;
+    int ictxt;
+    blacs_get_(&icontxt, &what, &ictxt);
+
+    // Initialize BLACS grid.
+    int ip, jp;
+    blacs_gridinit_(&ictxt, "Column-major", &(plasma->p), &(plasma->q));
+    blacs_gridinfo_(&ictxt, &(plasma->p), &(plasma->q), &ip, &jp);
+
+    // Initialize ScaLAPACK descriptors.
+    int scal_descA[9];
+
     //================================================================
     // Allocate and initialize arrays.
     //================================================================
-    plasma_complex64_t *A =
-        (plasma_complex64_t*)malloc((size_t)lda*n*sizeof(plasma_complex64_t));
-    assert(A != NULL);
+    int irsrc = 0;
+    int icsrc = 0;
+    int info;
 
-    int seed[] = {0, 0, 0, 1};
-    lapack_int retval;
-    retval = LAPACKE_zlarnv(1, seed, (size_t)lda*n, A);
-    assert(retval == 0);
+    // A
+    int m_loc = numroc_(&m, &nb, &ip, &irsrc, &(plasma->p));
+    int llda = imax(1, m_loc);
+    descinit_(scal_descA, &m, &n, &nb, &nb, &irsrc, &icsrc, &ictxt,
+              &llda, &info);
+    int n_loc = numroc_(&n, &nb, &jp, &icsrc, &(plasma->q));
+    plasma_complex64_t *A_loc =
+        (plasma_complex64_t*)malloc((size_t)llda*n_loc*sizeof(plasma_complex64_t));
+    assert(A_loc != NULL);
 
-    plasma_complex64_t *Aref = NULL;
+    // Seed for ScaLAPACK matrix generation.
+    int iaseed = 100;
+    // Row and column offsets for local matrix generation.
+    int iroff = 0;
+    int icoff = 0;
+
+    pzmatgen_(&ictxt, "General", "No diagonal preference", &m, &n, &nb, &nb,
+              A_loc, &llda, &irsrc, &icsrc, &iaseed,
+              &iroff, &m_loc, &icoff, &n_loc,
+              &ip, &jp, &(plasma->p), &(plasma->q));
+
+    // Copy C for testing purposes.
+    plasma_complex64_t *Aref_loc = NULL;
     if (test) {
-        Aref = (plasma_complex64_t*)malloc(
-            (size_t)lda*n*sizeof(plasma_complex64_t));
-        assert(Aref != NULL);
+        Aref_loc = (plasma_complex64_t*)
+            malloc((size_t)llda*n_loc*sizeof(plasma_complex64_t));
+        assert(Aref_loc != NULL);
 
-        memcpy(Aref, A, (size_t)lda*n*sizeof(plasma_complex64_t));
+        memcpy(Aref_loc,A_loc, (size_t)llda*n_loc*sizeof(plasma_complex64_t));
     }
 
     //================================================================
@@ -99,18 +150,17 @@ void test_zgeqrf(param_value_t param[], bool run)
     //================================================================
     // Run and time PLASMA.
     //================================================================
-    plasma_context_t *plasma = plasma_context_self();
     MPI_Barrier(plasma->comm);
     plasma_time_t start = MPI_Wtime();
 
-    plasma_zgeqrf(m, n, A, lda, &T);
+    plasma_zgeqrf(m, n, A_loc, llda, &T);
 
     MPI_Barrier(plasma->comm);
     plasma_time_t stop = MPI_Wtime();
     plasma_time_t time = stop-start;
 
-    param[PARAM_TIME].d = plasma->time;
-    param[PARAM_GFLOPS].d = flops_zgeqrf(m, n) / plasma->time / 1e9;
+    param[PARAM_TIME].d = time;
+    param[PARAM_GFLOPS].d = flops_zgeqrf(m, n) / time / 1e9;
 
     //=================================================================
     // Test results by checking orthogonality of Q and precision of Q*R
@@ -123,109 +173,129 @@ void test_zgeqrf(param_value_t param[], bool run)
         int my_rank;
         MPI_Comm_rank(plasma->comm, &my_rank);
 
-        // At this point, only root contains the matrix,
-        // broadcast it to everyone.
-        int size = lda*n*sizeof(plasma_complex64_t);
-        MPI_Bcast(A, size, MPI_CHAR, 0, plasma->comm);
-
         // Check the orthogonality of Q
         int minmn = imin(m, n);
 
-        // Allocate space for Q.
-        int ldq = m;
-        plasma_complex64_t *Q =
-            (plasma_complex64_t *)malloc((size_t)ldq*minmn*
-                                         sizeof(plasma_complex64_t));
+        // Q
+        int iq = 1; 
+        int jq = 1;
+        int scal_descQ[9];
+        int Qm_loc = numroc_(&m, &nb, &ip, &irsrc, &(plasma->p));
+        int lldq = imax(1, Qm_loc);
+        descinit_(scal_descQ, &m, &minmn, &nb, &nb, &irsrc, &icsrc, &ictxt,
+                  &lldq, &info);
+        int Qn_loc = numroc_(&minmn, &nb, &jp, &icsrc, &(plasma->q));
+        plasma_complex64_t *Q_loc =
+            (plasma_complex64_t*)malloc((size_t)lldq*Qn_loc*sizeof(plasma_complex64_t));
+        assert(Q_loc != NULL);
 
         // Build Q.
-        plasma_zungqr(m, minmn, minmn, A, lda, T, Q, ldq);
+        plasma_zungqr(m, minmn, minmn, A_loc, llda, T, Q_loc, lldq);
 
-        if (my_rank == 0) {
-            // Build the identity matrix
-            plasma_complex64_t *Id =
-                (plasma_complex64_t *) malloc((size_t)minmn*minmn*
-                                              sizeof(plasma_complex64_t));
-            LAPACKE_zlaset_work(LAPACK_COL_MAJOR, 'g', minmn, minmn,
-                                0.0, 1.0, Id, minmn);
+        // Identity
+        int scal_descI[9];
+        int Im_loc = numroc_(&minmn, &nb, &ip, &irsrc, &(plasma->p));
+        int lldi = imax(1, Im_loc);
+        descinit_(scal_descI, &minmn, &minmn, &nb, &nb, &irsrc, &icsrc, &ictxt,
+                  &lldi, &info);
+        int In_loc = numroc_(&minmn, &nb, &jp, &icsrc, &(plasma->q));
+        plasma_complex64_t *I_loc =
+            (plasma_complex64_t*)malloc((size_t)lldi*In_loc*sizeof(plasma_complex64_t));
+        assert(I_loc != NULL);
 
-            // Perform Id - Q^H * Q
-            cblas_zherk(CblasColMajor, CblasUpper, CblasConjTrans, minmn, m,
-                        -1.0, Q, ldq, 1.0, Id, minmn);
+        // Build the identity matrix
+        int ii = 1; 
+        int ji = 1;
+        plasma_complex64_t zone  = 1.0;
+        plasma_complex64_t zzero = 0.0;
+        pzlaset_("G", &minmn, &minmn, &zzero, &zone, I_loc, &ii, &ji, scal_descI);
 
-            // work array of size m is needed for computing L_oo norm
-            double *work = (double *) malloc((size_t)m*sizeof(double));
+        // Perform Id - Q^H * Q
+        double one  = 1.0;
+        double mone = -1.0;
+        pzherk_("U", "C", &minmn, &m, &mone, Q_loc, &iq, &jq, scal_descQ, 
+                                      &one,  I_loc, &ii, &ji, scal_descI);
 
-            // |Id - Q^H * Q|_oo
-            ortho = LAPACKE_zlanhe_work(LAPACK_COL_MAJOR, 'I', 'u',
-                                        minmn, Id, minmn, work);
+        size_t wsize = Im_loc + 2 * In_loc + lldi + lldi*nb;
+        double *work = (double *) malloc((size_t)wsize*sizeof(double));
 
-            // normalize the result
-            // |Id - Q^H * Q|_oo / n
-            ortho /= minmn;
+        // |Id - Q^H * Q|_oo
+        ortho = pzlanhe_("I", "U", &minmn, I_loc, &ii, &ji, scal_descI, work);
+        MPI_Bcast(&ortho, 1, MPI_DOUBLE, 0, plasma->comm);
 
-            free(Id);
-            free(work);
-        }
-        free(Q);
+        // normalize the result
+        // |Id - Q^H * Q|_oo / n
+        ortho /= minmn;
 
-        MPI_Bcast(&ortho,   1, MPI_DOUBLE, 0, plasma->comm);
+        free(I_loc);
+        free(Q_loc);
 
         // Check the accuracy of A - Q * R
-        // LAPACK version does not construct Q, it uses only application of it
 
         // Extract the R.
-        plasma_complex64_t *R =
-            (plasma_complex64_t *)malloc((size_t)m*n*
-                                         sizeof(plasma_complex64_t));
-        LAPACKE_zlaset_work(LAPACK_COL_MAJOR, 'l', m, n,
-                            0.0, 0.0, R, m);
-        LAPACKE_zlacpy_work(LAPACK_COL_MAJOR, 'u', m, n, A, lda, R, m);
+        int scal_descR[9];
+        int Rm_loc = numroc_(&m, &nb, &ip, &irsrc, &(plasma->p));
+        int lldr = imax(1, Rm_loc);
+        descinit_(scal_descR, &m, &n, &nb, &nb, &irsrc, &icsrc, &ictxt,
+                  &lldr, &info);
+        int Rn_loc = numroc_(&n, &nb, &jp, &icsrc, &(plasma->q));
+        plasma_complex64_t *R_loc =
+            (plasma_complex64_t*)malloc((size_t)lldr*Rn_loc*sizeof(plasma_complex64_t));
+        assert(R_loc != NULL);
+
+        int ir = 1; 
+        int jr = 1;
+        pzlaset_("L", &m, &n, &zzero, &zzero, R_loc, &ir, &jr, scal_descR);
+
+        int ia = 1; 
+        int ja = 1;
+        pzlacpy_("U", &m, &n, A_loc, &ia, &ja, scal_descA,
+                              R_loc, &ir, &jr, scal_descR);
 
         // Compute Q * R.
-        plasma_zunmqr(PlasmaLeft, PlasmaNoTrans, m, n, minmn, A, lda, T,
-                      R, m);
+        plasma_zunmqr(PlasmaLeft, PlasmaNoTrans, m, n, minmn,
+                     A_loc, llda, T, R_loc, lldr);
 
-        if (my_rank == 0) {
-            // Compute the difference.
-            // R = A - Q*R
-            for (int j = 0; j < n; j++)
-                for (int i = 0; i < m; i++)
-                    R[j*m+i] = Aref[j*lda+i] - R[j*m+i];
+        // Compute the difference.
+        // R = A - Q*R
+        plasma_complex64_t zmone = -1.0;
+        pzgeadd_( "N", &m, &n, &zone,  Aref_loc, &ia, &ja, scal_descA,
+                               &zmone, R_loc,    &ir, &jr, scal_descR);
 
-            // work array of size m is needed for computing L_oo norm
-            double *work = (double *) malloc((size_t)m*sizeof(double));
+        // |A|_oo
+        double normA = pzlange_("I", &m, &n, Aref_loc, &ia, &ja, scal_descA,
+                                work);
+        MPI_Bcast(&normA,   1, MPI_DOUBLE, 0, plasma->comm);
 
-            // |A|_oo
-            double normA = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
-                                               Aref, lda, work);
 
-            // |A - Q*R|_oo
-            error = LAPACKE_zlange_work(LAPACK_COL_MAJOR, 'I', m, n,
-                                        R, m, work);
-
-            // normalize the result
-            // |A-QR|_oo / (|A|_oo * n)
-            error /= (normA * n);
-
-            success = (error < tol && ortho < tol);
-
-            free(work);
-        }
-        free(R);
-
+        // |A - Q*R|_oo
+        error = pzlange_("I", &m, &n, R_loc, &ir, &jr, scal_descR, work);
         MPI_Bcast(&error,   1, MPI_DOUBLE, 0, plasma->comm);
-        MPI_Bcast(&success, 1, MPI_INT,    0, plasma->comm);
+
+        // normalize the result
+        // |A-QR|_oo / (|A|_oo * n)
+        error /= (normA * n);
+
+        success = (error < tol && ortho < tol);
+
+        //printf("ortho = %e, error = %e \n", ortho, error);
+
+        free(work);
+        free(R_loc);
 
         param[PARAM_ERROR].d   = error;
         param[PARAM_ORTHO].d   = ortho;
         param[PARAM_SUCCESS].i = success;
     }
 
+    // Destroy the process grid.
+    blacs_gridexit_(&ictxt);
+
     //================================================================
     // Free arrays.
     //================================================================
     plasma_desc_destroy(&T);
-    free(A);
+    free(A_loc);
     if (test)
-        free(Aref);
+        free(Aref_loc);
 }

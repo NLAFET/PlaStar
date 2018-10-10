@@ -12,12 +12,13 @@
 
 #include "plasma_types.h"
 #include "plasma_error.h"
+#include "plasma_distributed.h"
 
 #include <stdlib.h>
 #include <assert.h>
 
 #include <starpu.h>
-
+#include <starpu_mpi.h>
 #include <mpi.h>
 
 #ifdef __cplusplus
@@ -79,15 +80,26 @@ typedef struct {
              ///  includes the space for potential fills, i.e., kl+ku
 
     // array of StarPU handles to tiles
-    starpu_data_handle_t *tile_handles;
+    starpu_data_handle_t **tile_handles;
 
     // related to distribution
     MPI_Comm comm; ///< MPI_Communicator
     int p;   ///< number of rows in a 2D processor grid
     int q;   ///< number of columns in a 2D processor grid
     // function describing ownership of a tile
-    int (*tile_owner) (int p, int q, int m, int n, int i, int j);
+    int (*tile_owner) (int p, int q, int i, int j);
+    int id;  ///< id for distributed tag asignment
 
+    // Properties for distributed matrix.
+    int mtl; ///< number of local tile rows
+    int ntl; ///< number of local tile columns
+
+    int ml; ///< number of local rows
+    int nl; ///< number of local columns
+
+    int gml; ///< local number of rows padded to whole tiles
+    int gnl; ///< local number of columns padded to whole tiles
+    
 } plasma_desc_t;
 
 /******************************************************************************/
@@ -105,90 +117,48 @@ static inline size_t plasma_element_size(int type)
 }
 
 /******************************************************************************/
-static inline void *plasma_tile_addr_general(plasma_desc_t A, int m, int n)
+static inline void *plasma_tile_addr_general(plasma_desc_t A, int m, int n) 
 {
-    int mm = m + A.i/A.mb;
-    int nn = n + A.j/A.nb;
+    // find local indices
+    int m_loc, n_loc;
+    plasma_tile_global2local(m, n, A.p, A.q, &m_loc, &n_loc);
+
     size_t eltsize = plasma_element_size(A.precision);
     size_t offset = 0;
 
-    int lm1 = A.gm/A.mb;
-    int ln1 = A.gn/A.nb;
-
-    if (mm < lm1)
-        if (nn < ln1)
-            offset = A.mb*A.nb*(mm + (size_t)lm1 * nn);
-        else
-            offset = A.A12 + ((size_t)A.mb * (A.gn%A.nb) * mm);
-    else
-        if (nn < ln1)
-            offset = A.A21 + ((size_t)A.nb * (A.gm%A.mb) * nn);
-        else
-            offset = A.A22;
+    offset = (m_loc + A.mtl * n_loc)*A.mb*A.nb;
+    //printf("m, n, offset = %d, %d, %d \n",m, n, offset);
 
     return (void*)((char*)A.matrix + (offset*eltsize));
 }
-
+    
 /******************************************************************************/
-static inline void *plasma_tile_addr_triangle(plasma_desc_t A, int m, int n)
-{
-    int mm = m + A.i/A.mb;
-    int nn = n + A.j/A.nb;
-    size_t eltsize = plasma_element_size(A.precision);
-    size_t offset = 0;
-
-    int lm1 = A.gm/A.mb;
-    int ln1 = A.gn/A.nb;
-
-    if (mm < lm1) {
-        if (nn < ln1) {
-            if (A.type == PlasmaUpper) {
-                offset = A.mb*A.nb*(mm + (nn * (nn + 1))/2);
-            } 
-            else {
-                offset = A.mb*A.nb*((mm - nn) + (nn * (2*lm1 - (nn-1)))/2);
-            }
-        } 
-        else {
-            offset = A.A12 + ((size_t)A.mb * (A.gn%A.nb) * mm);
-        }
-    } 
-    else {
-        if (nn < ln1) {
-            offset = A.A21 + ((size_t)A.nb * (A.gm%A.mb) * nn);
-        }
-        else {
-            offset = A.A22;
-        }
-    }
-
-    return (void*)((char*)A.matrix + (offset*eltsize));
-}
-
-/******************************************************************************/
-static inline void *plasma_tile_addr_general_band(plasma_desc_t A, int m, int n)
-{
-    return plasma_tile_addr_general(A, (A.kut-1)+m-n, n);
-}
+/* static inline void *plasma_tile_addr_triangle(plasma_desc_t A, int m, int n) */
+//static inline void *plasma_tile_addr_triangle(plasma_desc_t A, int m, int n)
+//{
+//    // find local indices
+//    int ml = m/A.p;
+//    int nl = n/A.q;
+//
+//    size_t eltsize = plasma_element_size(A.precision);
+//    size_t offset = 0;
+//
+//    if (A.type == PlasmaUpper) {
+//        offset = A.mb*A.nb*(ml + (nl * (nl + 1))/2);
+//    } 
+//    else {
+//        offset = A.mb*A.nb*((ml - nl) + (nl * (2*A.mtl - (nl-1)))/2);
+//    }
+//
+//    return (void*)((char*)A.matrix + (offset*eltsize));
+//}
 
 /******************************************************************************/
 static inline void *plasma_tile_addr(plasma_desc_t A, int m, int n)
 {
-    if (A.type == PlasmaGeneral) {
-        return plasma_tile_addr_general(A, m, n);
-    }
-    else if (A.type == PlasmaGeneralBand) {
-        return plasma_tile_addr_general_band(A, m, n);
-    }
-    else if (A.type == PlasmaUpper || A.type == PlasmaLower) {
-        return plasma_tile_addr_triangle(A, m, n);
-    }
-    else {
-        plasma_fatal_error("invalid matrix type");
-        return NULL;
-    }
+    return plasma_tile_addr_general(A, m, n);
 }
-
+    
 /***************************************************************************//**
  *
  *  Returns the height of the tile with vertical position k.
@@ -196,16 +166,10 @@ static inline void *plasma_tile_addr(plasma_desc_t A, int m, int n)
  */
 static inline int plasma_tile_mmain(plasma_desc_t A, int k)
 {
-    if (A.type == PlasmaGeneralBand) {
-        return A.mb;
-    } else {
-        if (A.i/A.mb+k < A.gm/A.mb)
-            return A.mb;
-        else
-            return A.gm%A.mb;
-    }
-}
-
+    (void) k;
+    return A.mb;
+}    
+    
 /***************************************************************************//**
  *
  *  Returns the width of the tile with horizontal position k.
@@ -213,12 +177,11 @@ static inline int plasma_tile_mmain(plasma_desc_t A, int k)
  */
 static inline int plasma_tile_nmain(plasma_desc_t A, int k)
 {
-    if (A.j/A.nb+k < A.gn/A.nb)
-        return A.nb;
-    else
-        return A.gn%A.nb;
+    (void) k;
+    return A.nb;
 }
 
+    
 /***************************************************************************//**
  *
  *  Returns the height of the portion of the submatrix occupying the tile
@@ -251,12 +214,6 @@ static inline int plasma_tile_nview(plasma_desc_t A, int k)
             return A.nb;
         else
             return (A.j+A.n)%A.nb;
-}
-
-/******************************************************************************/
-static inline int plasma_tile_mmain_band(plasma_desc_t A, int m, int n)
-{
-    return plasma_tile_mmain(A, (A.kut-1)+m-n);
 }
 
 /******************************************************************************/
@@ -302,16 +259,14 @@ int plasma_desc_handles_create(plasma_desc_t *A);
 int plasma_desc_handles_destroy(plasma_desc_t *A);
 
 int plasma_desc_set_dist(MPI_Comm comm, int p, int q,
-                         int (*tile_owner)(int p, int q, int m, int n, int i, int j),
+                         int (*tile_owner)(int p, int q,  int i, int j),
                          plasma_desc_t *A);
 
 //static inline void *plasma_desc_handle_addr(plasma_desc_t A, int m, int n) {
 //    return (A.tile_handles)[n*A.gmt + m];
 //}
 
-static inline starpu_data_handle_t plasma_desc_handle(plasma_desc_t A, int m, int n) {
-    return (A.tile_handles)[n*A.gmt + m];
-}
+starpu_data_handle_t plasma_desc_handle(plasma_desc_t A, int m, int n);
 
 int plasma_desc_populate_nonlocal_tiles(plasma_desc_t *A);
 int plasma_starpu_data_acquire(plasma_desc_t *A);

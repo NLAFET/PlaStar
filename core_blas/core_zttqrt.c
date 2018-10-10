@@ -276,16 +276,23 @@ struct starpu_codelet core_starpu_codelet_zttqrt = {
 };
 
 /******************************************************************************/
+#define A1(m, n) (starpu_data_handle_t) plasma_desc_handle(A1, m, n)
+#define A2(m, n) (starpu_data_handle_t) plasma_desc_handle(A2, m, n)
+#define T(m, n)  (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+
 void core_starpu_zttqrt(int m, int n, int ib,
-                        starpu_data_handle_t A1, int lda1,
-                        starpu_data_handle_t A2, int lda2,
-                        starpu_data_handle_t T,  int ldt,
+                        plasma_desc_t A1, int A1m, int A1n, int lda1,
+                        plasma_desc_t A2, int A2m, int A2n, int lda2,
+                        plasma_desc_t T,  int Tm,  int Tn,  int ldt,
                         plasma_workspace_t work,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
     //int owner_A1 = starpu_mpi_data_get_rank(A1);
-    int owner_A2 = starpu_mpi_data_get_rank(A2);
-    int owner_T  = starpu_mpi_data_get_rank(T);
+    //int owner_A2 = starpu_mpi_data_get_rank(A2);
+    //int owner_T  = starpu_mpi_data_get_rank(T);
+    //int owner_A1 = (A1.tile_owner)(A1.p, A1.q, A1m, A1n);
+    int owner_A2 = (A2.tile_owner)(A2.p, A2.q, A2m, A2n);
+    int owner_T  = (T.tile_owner)(T.p, T.q, Tm, Tn);
 
     //assert(owner_T == owner_A2);
 
@@ -306,11 +313,11 @@ void core_starpu_zttqrt(int m, int n, int ib,
         STARPU_VALUE,    &m,                 sizeof(int),
         STARPU_VALUE,    &n,                 sizeof(int),
         STARPU_VALUE,    &ib,                sizeof(int),
-        STARPU_RW,       A1,
+        STARPU_RW,       A1(A1m, A1n),
         STARPU_VALUE,    &lda1,              sizeof(int),
-        STARPU_RW,       A2,
+        STARPU_RW,       A2(A2m, A2n),
         STARPU_VALUE,    &lda2,              sizeof(int),
-        STARPU_W,        T,
+        STARPU_W,        T(Tm, Tn),
         STARPU_VALUE,    &ldt,               sizeof(int),
         STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
         STARPU_EXECUTE_ON_NODE, execution_rank,

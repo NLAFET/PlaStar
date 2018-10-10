@@ -98,14 +98,6 @@ int plasma_zungqr(int m, int n, int k,
         plasma_error("illegal value of k");
         return -3;
     }
-    if (lda < imax(1, m)) {
-        plasma_error("illegal value of lda");
-        return -5;
-    }
-    if (ldq < imax(1, m)) {
-        plasma_error("illegal value of ldq");
-        return -8;
-    }
 
     // quick return
     if (n <= 0)

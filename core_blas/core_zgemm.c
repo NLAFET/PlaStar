@@ -141,17 +141,25 @@ struct starpu_codelet core_starpu_codelet_zgemm = {
 
 /******************************************************************************/
 // The function for task insertion.
+//
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define B(m, n) (starpu_data_handle_t) plasma_desc_handle(B, m, n)
+#define C(m, n) (starpu_data_handle_t) plasma_desc_handle(C, m, n)
+
 void core_starpu_zgemm(
     plasma_enum_t transa, plasma_enum_t transb,
     int m, int n, int k,
-    plasma_complex64_t alpha, starpu_data_handle_t A, int lda,
-                              starpu_data_handle_t B, int ldb,
-    plasma_complex64_t beta,  starpu_data_handle_t C, int ldc,
+    plasma_complex64_t alpha, plasma_desc_t A, int Am, int An, int lda,
+                              plasma_desc_t B, int Bm, int Bn, int ldb,
+    plasma_complex64_t beta,  plasma_desc_t C, int Cm, int Cn, int ldc,
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
-    int owner_B = starpu_mpi_data_get_rank(B);
-    int owner_C = starpu_mpi_data_get_rank(C);
+    //int owner_A = starpu_mpi_data_get_rank(A);
+    //int owner_B = starpu_mpi_data_get_rank(B);
+    //int owner_C = starpu_mpi_data_get_rank(C);
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
+    int owner_B = (B.tile_owner)(B.p, B.q, Bm, Bn);
+    int owner_C = (C.tile_owner)(C.p, C.q, Cm, Cn);
 
     int execution_rank = owner_C;
 
@@ -172,12 +180,12 @@ void core_starpu_zgemm(
             STARPU_VALUE,    &n,                 sizeof(int),
             STARPU_VALUE,    &k,                 sizeof(int),
             STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
-            STARPU_R,        A,
+            STARPU_R,        A(Am, An),
             STARPU_VALUE,    &lda,               sizeof(int),
-            STARPU_R,        B,
+            STARPU_R,        B(Bm, Bn),
             STARPU_VALUE,    &ldb,               sizeof(int),
             STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
-            STARPU_RW,       C,
+            STARPU_RW,       C(Cm, Cn),
             STARPU_VALUE,    &ldc,               sizeof(int),
             STARPU_EXECUTE_ON_NODE, execution_rank,
             STARPU_NAME, "zgemm",

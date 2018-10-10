@@ -140,22 +140,12 @@ int plasma_zunmqr(plasma_enum_t side, plasma_enum_t trans,
         plasma_error("illegal value of k");
         return -5;
     }
-    if (lda < imax(1, am)) {
-        plasma_error("illegal value of lda");
-        return -7;
-    }
-    if (ldc < imax(1, m)) {
-        plasma_error("illegal value of ldc");
-        return -10;
-    }
+
 
     // quick return
     if (m == 0 || n == 0 || k == 0)
         return PlasmaSuccess;
 
-    // Tune parameters.
-    if (plasma->tuning)
-        plasma_tune_geqrf(plasma, PlasmaComplexDouble, m, n);
 
     // Set tiling parameters.
     int ib = plasma->ib;

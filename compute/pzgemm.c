@@ -18,9 +18,9 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
-#define B(m, n) (starpu_data_handle_t) plasma_desc_handle(B, m, n)
-#define C(m, n) (starpu_data_handle_t) plasma_desc_handle(C, m, n)
+#define A(m, n) A,m,n
+#define B(m, n) B,m,n
+#define C(m, n) C,m,n
 
 /***************************************************************************//**
  * Parallel tile matrix-matrix multiplication.

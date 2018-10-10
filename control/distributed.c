@@ -32,6 +32,11 @@ int plasma_mpi_init()
     plasma->mpi_outer_init = flag;
     plasma->comm           = MPI_COMM_WORLD;
 
+    // Set default process grid P and Q
+    int nproc;
+    MPI_Comm_size(plasma->comm, &nproc);
+    plasma_get_process_grid_dimension(nproc, &(plasma->p), &(plasma->q));
+    
     return PlasmaSuccess;
 }
 

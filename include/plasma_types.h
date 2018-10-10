@@ -127,7 +127,8 @@ enum {
     PlasmaIb,
     PlasmaInplaceOutplace,
     PlasmaNumPanelThreads,
-    PlasmaHouseholderMode
+    PlasmaHouseholderMode,
+    PlasmaProcessRows
 };
 
 /******************************************************************************/

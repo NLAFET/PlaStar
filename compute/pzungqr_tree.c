@@ -19,10 +19,14 @@
 #include "plasma_tree.h"
 #include "core_blas.h"
 
-#define A(m, n)  (starpu_data_handle_t) plasma_desc_handle(A, m, n)
-#define Q(m, n)  (starpu_data_handle_t) plasma_desc_handle(Q, m, n)
-#define T(m, n)  (starpu_data_handle_t) plasma_desc_handle(T, m, n)
-#define T2(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n+(T.nt/2))
+//#define A(m, n)  (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define Q(m, n)  (starpu_data_handle_t) plasma_desc_handle(Q, m, n)
+//#define T(m, n)  (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+//#define T2(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n+(T.nt/2))
+#define A(m, n)  A,m,n
+#define Q(m, n)  Q,m,n
+#define T(m, n)  T,m,n
+#define T2(m, n) T,m,n+(T.nt/2)
 /***************************************************************************//**
  *  Parallel construction of Q using tile V (application to identity)
  *  based on a tree Householder reduction.

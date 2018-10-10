@@ -17,7 +17,7 @@ int plasma_workspace_create(plasma_workspace_t *workspace, size_t lworkspace,
                             plasma_enum_t dtyp)
 {
     // Allocate array of pointers.
-    workspace->nthread = starpu_cpu_worker_get_count();
+    workspace->nthread = starpu_worker_get_count();
     workspace->lworkspace = lworkspace;
     workspace->dtyp  = dtyp;
     if ((workspace->spaces = (void**)calloc(workspace->nthread,

@@ -18,8 +18,10 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
-#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+//#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+#define A(m, n) A,m,n
+#define T(m, n) T,m,n
 
 /***************************************************************************//**
  *  Parallel tile QR factorization - dynamic scheduling

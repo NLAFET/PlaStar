@@ -107,23 +107,25 @@ struct starpu_codelet core_starpu_codelet_zlaset = {
 
 /******************************************************************************/
 // The function for task insertion.
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
 void core_starpu_zlaset(
     plasma_enum_t uplo,
     int mb, int nb,
     int i, int j,
     int m, int n,
     plasma_complex64_t alpha, plasma_complex64_t beta,
-    starpu_data_handle_t A)
+    plasma_desc_t A, int Am, int An)
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
+    //int owner_A = starpu_mpi_data_get_rank(A);
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
 
     int execution_rank = owner_A;
 
     int my_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-//    if (owner_A == my_rank ||
-//        execution_rank == my_rank) {
+    if (owner_A == my_rank ||
+        execution_rank == my_rank) {
 
         starpu_mpi_insert_task(
             MPI_COMM_WORLD,
@@ -137,9 +139,9 @@ void core_starpu_zlaset(
             STARPU_VALUE,    &n,                 sizeof(int),
             STARPU_VALUE,    &alpha,             sizeof(plasma_complex64_t),
             STARPU_VALUE,    &beta,              sizeof(plasma_complex64_t),
-            STARPU_W,        A,
+            STARPU_W,        A(Am, An),
             STARPU_EXECUTE_ON_NODE, execution_rank,
             STARPU_NAME, "zlaset",
             0);
-//    }
+    }
 }

@@ -48,49 +48,95 @@ int plasma_mpi_finalize();
 // *******************
 // Data distributions.
 // *******************
-// root owns everything
-static inline int plasma_owner_root(int p, int q, int m, int n, int i, int j)
+// 2D block cyclic - get rank from process coordinates
+static inline int plasma_coords2rank(int ip, int jp, int p)
 {
-    int owner = 0;
+    // with column major numbering of processors into 2D grid:
+    return ip + p*jp;
+}
+
+// 2D block cyclic - get process coordinates in process grid
+static inline void plasma_rank2coords(int rank, int p, int *ip, int *jp)
+{
+    // with column major numbering of processors into 2D grid:
+    *ip = rank % p;
+    *jp = rank / p;
+}
+
+// 2D block cyclic - ownership of a tile
+static inline int plasma_owner_2D_block_cyclic(int p, int q, int i, int j)
+{
+    // process coordinates for the tile
+    int ip = (i % p);
+    int jp = (j % q);
+
+    int owner = plasma_coords2rank(ip, jp, p);
     return owner;
 }
 
-// 1D chunks
-static inline int plasma_owner_1D_chunks(int p, int q, int m, int n, int i, int j)
+// 2D block cyclic - global tile indices to local tile indices
+static inline void plasma_tile_global2local(int i, int j, int p, int q,
+                                            int *i_loc, int *j_loc)
 {
-    int nproc = p*q;
-    int chunk = (n + nproc - 1) / nproc;
-    assert(chunk > 0);
-
-    int owner = j / chunk;
-    return owner;
+    // local index of the tile in the local matrix
+    *i_loc = i / p;
+    *j_loc = j / q;
 }
 
-// 2D chunks
-static inline int plasma_owner_2D_chunks(int p, int q, int m, int n, int i, int j)
+static inline int plasma_numroc(int n, int nb, int iproc, int isrcproc, int nprocs)
 {
-    int chunk_m = (m + p - 1) / p;
-    int chunk_n = (n + q - 1) / q;
-    assert(chunk_m > 0 && chunk_n > 0);
+//  Purpose
+//  =======
+//
+//  NUMROC computes the NUMber of Rows Or Columns of a distributed
+//  matrix owned by the process indicated by IPROC.
+//  Converted from the ScaLAPACK function.
+//
+//  Arguments
+//  =========
+//
+//  N         (global input) INTEGER
+//            The number of rows/columns in distributed matrix.
+//
+//  NB        (global input) INTEGER
+//            Block size, size of the blocks the distributed matrix is
+//            split into.
+//
+//  IPROC     (local input) INTEGER
+//            The coordinate of the process whose local array row or
+//            column is to be determined.
+//
+//  ISRCPROC  (global input) INTEGER
+//            The coordinate of the process that possesses the first
+//            row or column of the distributed matrix.
+//
+//  NPROCS    (global input) INTEGER
+//            The total number processes over which the matrix is
+//            distributed.
 
-    int owner = (j / chunk_n)*q + (i / chunk_m);
-    return owner;
-}
+     // Figure PROC's distance from source process
+     int mydist = (nprocs+iproc-isrcproc) % nprocs;
 
-// 1D block cyclic
-static inline int plasma_owner_1D_block_cyclic(int p, int q, int m, int n, int i, int j)
-{
-    int nproc = p*q;
-    int owner = j % nproc;
-    return owner;
-}
+     // Figure the total number of whole NB blocks N is split up into
+     int nblocks = n / nb;
 
-// 2D block cyclic
-static inline int plasma_owner_2D_block_cyclic(int p, int q, int m, int n, int i, int j)
-{
-    int owner = (i % p) * q + (j % q);
-    return owner;
-}
+     // Figure the minimum number of rows/cols a process can have
+     int numroc = (nblocks/nprocs) * nb;
+
+     // See if there are any extra blocks
+     int extrablks = nblocks % nprocs;
+
+     // If I have an extra block
+     if      (mydist < extrablks) {
+         numroc = numroc + nb;
+     }
+     else if (mydist == extrablks) {
+         // If I have last block, it may be a partial block
+         numroc = numroc + n%nb;
+     }
+
+     return numroc;
+}    
 
 #ifdef __cplusplus
 }  // extern "C"

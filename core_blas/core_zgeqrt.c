@@ -187,8 +187,9 @@ static void core_starpu_cpu_zgeqrt(void *descr[], void *cl_arg)
 
     // Prepare workspaces.
     int id = starpu_worker_get_id();
-    plasma_complex64_t *tau = (plasma_complex64_t*) work.spaces[id];
     
+    plasma_complex64_t *tau = (plasma_complex64_t*) work.spaces[id];
+
     // Call the kernel.
     core_zgeqrt(m, n, ib,
                 A, lda,
@@ -207,15 +208,20 @@ struct starpu_codelet core_starpu_codelet_zgeqrt = {
 
 /******************************************************************************/
 // The function for inserting a task.
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+
 void core_starpu_zgeqrt(
     int m, int n, int ib,
-    starpu_data_handle_t A, int lda,
-    starpu_data_handle_t T, int ldt,
+    plasma_desc_t A, int Am, int An, int lda,
+    plasma_desc_t T, int Tm, int Tn, int ldt,
     plasma_workspace_t work, 
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
-    int owner_T = starpu_mpi_data_get_rank(T);
+    //int owner_A = starpu_mpi_data_get_rank(A);
+    //int owner_T = starpu_mpi_data_get_rank(T);
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
+    int owner_T = (T.tile_owner)(T.p, T.q, Tm, Tn);
 
     assert(owner_T == owner_A);
 
@@ -234,9 +240,9 @@ void core_starpu_zgeqrt(
             STARPU_VALUE,    &m,                 sizeof(int),
             STARPU_VALUE,    &n,                 sizeof(int),
             STARPU_VALUE,    &ib,                sizeof(int),
-            STARPU_RW,       A,
+            STARPU_RW,       A(Am, An),
             STARPU_VALUE,    &lda,               sizeof(int),
-            STARPU_W,        T,
+            STARPU_W,        T(Tm, Tn),
             STARPU_VALUE,    &ldt,               sizeof(int),
             STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
             STARPU_EXECUTE_ON_NODE, execution_rank,

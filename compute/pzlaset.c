@@ -18,7 +18,8 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define A(m, n) A,m,n
 
 /***************************************************************************//**
  *  Initializes the matrix A to beta on the diagonal and alpha on the

@@ -18,7 +18,7 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define A(m, n) A,m,n
 
 /***************************************************************************//**
  *  Parallel tile Cholesky factorization.
@@ -54,6 +54,7 @@ void plasma_pzpotrf(plasma_enum_t uplo, plasma_desc_t A,
                          A(m, k), ldam,
                     sequence, request);
             }
+            
             for (int m = k+1; m < A.mt; m++) {
                 int mvam = plasma_tile_mview(A, m);
                 int ldam = plasma_tile_mmain(A, m);
@@ -99,6 +100,7 @@ void plasma_pzpotrf(plasma_enum_t uplo, plasma_desc_t A,
                          A(k, m), ldak,
                     sequence, request);
             }
+
             for (int m = k+1; m < A.nt; m++) {
                 int nvam = plasma_tile_nview(A, m);
                 int ldam = plasma_tile_mmain(A, m);

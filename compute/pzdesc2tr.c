@@ -18,7 +18,8 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define A(m, n) A,m,n
 /******************************************************************************/
 void plasma_pzdesc2tr(plasma_desc_t A,
                       plasma_complex64_t *pA, int lda,
@@ -39,7 +40,12 @@ void plasma_pzdesc2tr(plasma_desc_t A,
             int x2 = n == A.nt-1 ? (A.j+A.n-1)%A.nb+1 : A.nb;
             int y2 = m == A.mt-1 ? (A.i+A.m-1)%A.mb+1 : A.mb;
 
-            plasma_complex64_t *f77 = &pA[(size_t)A.nb*lda*n + (size_t)A.mb*m];
+            // find local indices
+            int m_loc, n_loc;
+            plasma_tile_global2local(m, n, A.p, A.q, &m_loc, &n_loc);
+
+
+            plasma_complex64_t *f77 = &pA[(size_t)A.nb*lda*n_loc + (size_t)A.mb*m_loc];
 
             core_starpu_zlacpy(PlasmaGeneral, PlasmaNoTrans, PlasmaBackward,
                                x1, x2, y1, y2,

@@ -345,6 +345,7 @@ lapack = [
     ('sttmlq',               'dttmlq',               'cttmlq',               'zttmlq'              ),
     ('sttqrt',               'dttqrt',               'cttqrt',               'zttqrt'              ),
     ('sttlqt',               'dttlqt',               'cttlqt',               'zttlqt'              ),
+    ('smatgen',              'dmatgen',              'cmatgen',              'zmatgen'             ),
 ]
 
 

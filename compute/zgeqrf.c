@@ -94,10 +94,10 @@ int plasma_zgeqrf(int m, int n,
         plasma_error("illegal value of n");
         return -2;
     }
-    if (lda < imax(1, m)) {
-        plasma_error("illegal value of lda");
-        return -4;
-    }
+    //if (lda < imax(1, m)) {
+    //    plasma_error("illegal value of lda");
+    //    return -4;
+    //}
 
     // quick return
     if (imin(m, n) == 0)
@@ -151,7 +151,7 @@ int plasma_zgeqrf(int m, int n,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
-    
+
     double start = MPI_Wtime();
     // Call the tile async function.
     plasma_starpu_zgeqrf(A, *T, work, &sequence, &request);

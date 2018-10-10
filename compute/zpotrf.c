@@ -1,5 +1,5 @@
 /**
- *
+1;4205;0c *
  * @file
  *
  *  PLASMA is a software package provided by:
@@ -96,10 +96,6 @@ int plasma_zpotrf(plasma_enum_t uplo,
         plasma_error("illegal value of n");
         return -2;
     }
-    if (lda < imax(1, n)) {
-        plasma_error("illegal value of lda");
-        return -4;
-    }
 
     // quick return
     if (imax(n, 0) == 0)
@@ -135,13 +131,14 @@ int plasma_zpotrf(plasma_enum_t uplo,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
+    //starpu_mpi_wait_for_all(plasma->comm);
     double start = MPI_Wtime();
 
     // Call the tile async function.
     plasma_starpu_zpotrf(uplo, A, &sequence, &request);
- 
-    starpu_task_wait_for_all();
 
+    //starpu_mpi_wait_for_all(plasma->comm);
+    starpu_task_wait_for_all();
     double stop = MPI_Wtime();
     plasma->time = stop-start;
 

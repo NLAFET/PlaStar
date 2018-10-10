@@ -18,9 +18,12 @@
 #include "plasma_workspace.h"
 #include "core_blas.h"
 
-#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
-#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
-#define Q(m, n) (starpu_data_handle_t) plasma_desc_handle(Q, m, n)
+//#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+//#define Q(m, n) (starpu_data_handle_t) plasma_desc_handle(Q, m, n)
+#define A(m, n) A,m,n
+#define T(m, n) T,m,n
+#define Q(m, n) Q,m,n
 /***************************************************************************//**
  *  Parallel construction of Q using tile V (application to identity)
  **/

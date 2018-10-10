@@ -122,15 +122,20 @@ struct starpu_codelet core_starpu_codelet_zherk = {
     
 /******************************************************************************/
 // The function for task insertion.
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define C(m, n) (starpu_data_handle_t) plasma_desc_handle(C, m, n)
+
 void core_starpu_zherk(
     plasma_enum_t uplo, plasma_enum_t trans,
     int n, int k,
-    double alpha, starpu_data_handle_t A, int lda,
-    double beta,  starpu_data_handle_t C, int ldc,
+    double alpha, plasma_desc_t A, int Am, int An, int lda,
+    double beta,  plasma_desc_t C, int Cm, int Cn, int ldc,
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
-    int owner_C = starpu_mpi_data_get_rank(C);
+    //int owner_A = starpu_mpi_data_get_rank(A);
+    //int owner_C = starpu_mpi_data_get_rank(C);
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
+    int owner_C = (C.tile_owner)(C.p, C.q, Cm, Cn);
 
     int execution_rank = owner_C;
 
@@ -148,10 +153,10 @@ void core_starpu_zherk(
             STARPU_VALUE,    &n,           sizeof(int),
             STARPU_VALUE,    &k,           sizeof(int),
             STARPU_VALUE,    &alpha,       sizeof(double),
-            STARPU_R,        A,
+            STARPU_R,        A(Am, An),
             STARPU_VALUE,    &lda,         sizeof(int),
             STARPU_VALUE,    &beta,        sizeof(double),
-            STARPU_RW,       C,
+            STARPU_RW,       C(Cm, Cn),
             STARPU_VALUE,    &ldc,         sizeof(int),
             STARPU_EXECUTE_ON_NODE, execution_rank,
             STARPU_NAME,     "zherk",

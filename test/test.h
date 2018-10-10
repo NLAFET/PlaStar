@@ -68,6 +68,9 @@ typedef enum {
     PARAM_ZEROCOL, // if positive, a column of zeros inserted at that index
     PARAM_INCX,    // 1 to pivot forward, -1 to pivot backward
 
+    // distributed params.
+    PARAM_P,       // number of process rows in the grid
+    
     //------------------------------------------------------
     // Keep at the end!
     //------------------------------------------------------
@@ -149,6 +152,32 @@ void param_add_complex(plasma_complex64_t zval, param_t *param);
 int  param_step_inner(param_t param[]);
 int  param_step_outer(param_t param[], int idx);
 int  param_snap(param_t param[], param_value_t value[]);
+
+// ScaLAPACK related forward declarations
+void descinit_(int *scal_descA, int *m, int *n, int *mb, int *nb,
+               int *irsrc, int *icsrc, int *ictxt, int *llda, int *info);
+
+int numroc_( int *m, int *mb, int *ip, int *irsrc, int *p);
+
+void pzmatgen_(int *ictxt, char *Aform, char *diag, int *m, int *n, int *mb, int *nb,
+               plasma_complex64_t *A, int *llda, int *irsrc, int *icsrc, int *iaseed,
+               int *iroff, int *Am_loc, int *icoff, int *An_loc,
+               int *ip, int *jp, int *p, int *q);
+
+void pcmatgen_(int *ictxt, char *Aform, char *diag, int *m, int *n, int *mb, int *nb,
+               plasma_complex32_t *A, int *llda, int *irsrc, int *icsrc, int *iaseed,
+               int *iroff, int *Am_loc, int *icoff, int *An_loc,
+               int *ip, int *jp, int *p, int *q);
+
+void pdmatgen_(int *ictxt, char *Aform, char *diag, int *m, int *n, int *mb, int *nb,
+               double *A, int *llda, int *irsrc, int *icsrc, int *iaseed,
+               int *iroff, int *Am_loc, int *icoff, int *An_loc,
+               int *ip, int *jp, int *p, int *q);
+
+void psmatgen_(int *ictxt, char *Aform, char *diag, int *m, int *n, int *mb, int *nb,
+               float *A, int *llda, int *irsrc, int *icsrc, int *iaseed,
+               int *iroff, int *Am_loc, int *icoff, int *An_loc,
+               int *ip, int *jp, int *p, int *q);
 
 //==============================================================================
 static inline int imin(int a, int b)

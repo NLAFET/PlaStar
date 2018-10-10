@@ -22,7 +22,6 @@
 #include <starpu.h>
 #include <starpu_mpi.h>
 #include <omp.h>
-#include <mpi.h>
 /***************************************************************************//**
  *
  * @ingroup plasma_gemm
@@ -164,19 +163,6 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
         bn = k;
     }
 
-    if (lda < imax(1, am)) {
-        plasma_error("illegal value of lda");
-        return -8;
-    }
-    if (ldb < imax(1, bm)) {
-        plasma_error("illegal value of ldb");
-        return -10;
-    }
-    if (ldc < imax(1, m)) {
-        plasma_error("illegal value of ldc");
-        return -13;
-    }
-
     // quick return
     if (m == 0 || n == 0 || ((alpha == 0.0 || k == 0) && beta == 1.0))
         return PlasmaSuccess;
@@ -231,7 +217,7 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
 
     //Explicit synchronization for timing
     starpu_task_wait_for_all();
-    double start = MPI_Wtime();
+    double start = omp_get_wtime();
     
     // Call the tile async function.
     plasma_starpu_zgemm(transa, transb,
@@ -241,9 +227,10 @@ int plasma_zgemm(plasma_enum_t transa, plasma_enum_t transb,
                         &sequence, &request);
 
     // Enforce explicit tile update on owner
+    plasma_starpu_data_acquire(&C);
     
     starpu_task_wait_for_all();
-    double stop = MPI_Wtime();
+    double stop = omp_get_wtime();
     plasma->time = stop-start;
     
     // Translate back to LAPACK layout.

@@ -277,17 +277,24 @@ struct starpu_codelet core_starpu_codelet_zunmqr = {
 
 /******************************************************************************/
 // The function for inserting a task.
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define T(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+#define C(m, n) (starpu_data_handle_t) plasma_desc_handle(C, m, n)
+
 void core_starpu_zunmqr(plasma_enum_t side, plasma_enum_t trans,
                         int m, int n, int k, int ib,
-                        starpu_data_handle_t A, int lda,
-                        starpu_data_handle_t T, int ldt,
-                        starpu_data_handle_t C, int ldc,
+                        plasma_desc_t A, int Am, int An, int lda,
+                        plasma_desc_t T, int Tm, int Tn, int ldt,
+                        plasma_desc_t C, int Cm, int Cn, int ldc,
                         plasma_workspace_t work,
                         plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
-    int owner_T = starpu_mpi_data_get_rank(T);
-    int owner_C = starpu_mpi_data_get_rank(C);
+    //int owner_A = starpu_mpi_data_get_rank(A(m,n));
+    //int owner_T = starpu_mpi_data_get_rank(T(m,n));
+    //int owner_C = starpu_mpi_data_get_rank(C(m,n));
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
+    int owner_C = (C.tile_owner)(C.p, C.q, Cm, Cn);
+    int owner_T = (T.tile_owner)(T.p, T.q, Tm, Tn);
 
     assert(owner_T == owner_A);
 
@@ -310,11 +317,11 @@ void core_starpu_zunmqr(plasma_enum_t side, plasma_enum_t trans,
             STARPU_VALUE,    &n,                 sizeof(int),
             STARPU_VALUE,    &k,                 sizeof(int),
             STARPU_VALUE,    &ib,                sizeof(int),
-            STARPU_R,        A,
+            STARPU_R,        A(Am, An),
             STARPU_VALUE,    &lda,               sizeof(int),
-            STARPU_R,        T,
+            STARPU_R,        T(Tm, Tn),
             STARPU_VALUE,    &ldt,               sizeof(int),
-            STARPU_RW,       C,
+            STARPU_RW,       C(Cm, Cn),
             STARPU_VALUE,    &ldc,               sizeof(int),
             STARPU_VALUE,    &work,              sizeof(plasma_workspace_t),
             STARPU_EXECUTE_ON_NODE, execution_rank,

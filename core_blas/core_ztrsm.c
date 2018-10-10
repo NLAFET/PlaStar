@@ -138,18 +138,24 @@ struct starpu_codelet core_starpu_codelet_ztrsm = {
 };
 
 /******************************************************************************/
+
+#define A(m, n) (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+#define B(m, n) (starpu_data_handle_t) plasma_desc_handle(B, m, n)
+
 // The function for task insertion.
 void core_starpu_ztrsm(
     plasma_enum_t side, plasma_enum_t uplo,
     plasma_enum_t transa, plasma_enum_t diag,
     int m, int n,
-    plasma_complex64_t alpha, starpu_data_handle_t A, int lda,
-                              starpu_data_handle_t B, int ldb,
+    plasma_complex64_t alpha, plasma_desc_t A, int Am, int An, int lda,
+                              plasma_desc_t B, int Bm, int Bn, int ldb,
     plasma_sequence_t *sequence, plasma_request_t *request)
 
 {
-    int owner_A = starpu_mpi_data_get_rank(A);
-    int owner_B = starpu_mpi_data_get_rank(B);
+    //int owner_A = starpu_mpi_data_get_rank(A);
+    //int owner_B = starpu_mpi_data_get_rank(B);
+    int owner_A = (A.tile_owner)(A.p, A.q, Am, An);
+    int owner_B = (B.tile_owner)(B.p, B.q, Bm, Bn);
 
     int execution_rank = owner_B;
 
@@ -169,9 +175,9 @@ void core_starpu_ztrsm(
             STARPU_VALUE,    &m,           sizeof(int),
             STARPU_VALUE,    &n,           sizeof(int),
             STARPU_VALUE,    &alpha,       sizeof(plasma_complex64_t),
-            STARPU_R,        A,
+            STARPU_R,        A(Am, An),
             STARPU_VALUE,    &lda,         sizeof(int),
-            STARPU_RW,       B,
+            STARPU_RW,       B(Bm, Bn),
             STARPU_VALUE,    &ldb,         sizeof(int),
             STARPU_EXECUTE_ON_NODE, execution_rank,
             STARPU_NAME,     "ztrsm",

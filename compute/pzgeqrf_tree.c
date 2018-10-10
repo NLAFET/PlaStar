@@ -18,9 +18,12 @@
 #include "plasma_tree.h"
 #include "core_blas_z.h"
 
-#define A(m, n)  (starpu_data_handle_t) plasma_desc_handle(A, m, n)
-#define T(m, n)  (starpu_data_handle_t) plasma_desc_handle(T, m, n)
-#define T2(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n+(T.nt/2))
+//#define A(m, n)  (starpu_data_handle_t) plasma_desc_handle(A, m, n)
+//#define T(m, n)  (starpu_data_handle_t) plasma_desc_handle(T, m, n)
+//#define T2(m, n) (starpu_data_handle_t) plasma_desc_handle(T, m, n+(T.nt/2))
+#define A(m, n) A,m,n
+#define T(m, n) T,m,n
+#define T2(m, n) T,m,n+(T.nt/2)
 /***************************************************************************//**
  *  Parallel tile QR factorization based on a tree Householder reduction
  * @see plasma_starpu_zgeqrf

@@ -173,16 +173,19 @@ struct starpu_codelet core_starpu_codelet_zlacpy_backward = {
 
 /******************************************************************************/
 // The function for task insertion.
+#define B(m, n) (starpu_data_handle_t) plasma_desc_handle(B, m, n)
 void core_starpu_zlacpy(
     plasma_enum_t uplo, plasma_enum_t transa, plasma_enum_t direction,
     int x1, int x2, int y1, int y2,
     plasma_complex64_t *A, int lda,
-    starpu_data_handle_t B, int ldb,
+    plasma_desc_t B, int Bm, int Bn, int ldb,
     plasma_sequence_t *sequence, plasma_request_t *request)
 {
-    int owner = starpu_mpi_data_get_rank(B);
+    //int owner = starpu_mpi_data_get_rank(B);
+    int owner = (B.tile_owner)(B.p, B.q, Bm, Bn);
 
-    int execution_rank = (direction == PlasmaForward) ? owner : 0;
+    //int execution_rank = (direction == PlasmaForward) ? owner : 0;
+    int execution_rank = owner;
 
     int my_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -203,7 +206,7 @@ void core_starpu_zlacpy(
             STARPU_VALUE,    &y2,                sizeof(int),
             STARPU_VALUE,    &A,                 sizeof(plasma_complex64_t*),
             STARPU_VALUE,    &lda,               sizeof(int),
-            (direction == PlasmaForward) ? STARPU_W : STARPU_R, B,
+            (direction == PlasmaForward) ? STARPU_W : STARPU_R, B(Bm, Bn),
             STARPU_VALUE,    &ldb,               sizeof(int),
             STARPU_EXECUTE_ON_NODE, execution_rank,
             STARPU_NAME, "zlacpy",
